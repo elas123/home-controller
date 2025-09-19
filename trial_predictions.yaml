@@ -1,0 +1,60 @@
+template:
+  - sensor:
+      # Predicted Day Start (Off-day anchor): sunrise + 30 minutes (local)
+      - name: "Predicted Day Start"
+        unique_id: trial_predicted_day_start
+        state: >-
+          {% set sr = as_local(as_datetime(state_attr('sun.sun','next_rising'))) %}
+          {% if sr %}
+            {{ (sr + timedelta(minutes=30)) | timestamp_custom('%Y-%m-%d %H:%M:%S') }}
+          {% else %} N/A {% endif %}
+        attributes:
+          local_time: >-
+            {% set sr = as_local(as_datetime(state_attr('sun.sun','next_rising'))) %}
+            {% if sr %} {{ (sr + timedelta(minutes=30)) | timestamp_custom('%-I:%M %p') }} {% else %} N/A {% endif %}
+          minutes_until: >-
+            {% set sr = as_local(as_datetime(state_attr('sun.sun','next_rising'))) %}
+            {% if sr %}
+              {% set target = sr + timedelta(minutes=30) %}
+              {{ ((target - now()).total_seconds() / 60) | round(0) }}
+            {% else %} N/A {% endif %}
+
+      # Predicted Evening Start (Sunset local)
+      - name: "Predicted Evening Start"
+        unique_id: trial_predicted_evening_start
+        state: >-
+          {% set ss = as_local(as_datetime(state_attr('sun.sun','next_setting'))) %}
+          {% if ss %} {{ ss | timestamp_custom('%Y-%m-%d %H:%M:%S') }} {% else %} N/A {% endif %}
+        attributes:
+          local_time: >-
+            {% set ss = as_local(as_datetime(state_attr('sun.sun','next_setting'))) %}
+            {% if ss %} {{ ss | timestamp_custom('%-I:%M %p') }} {% else %} N/A {% endif %}
+          minutes_until: >-
+            {% set ss = as_local(as_datetime(state_attr('sun.sun','next_setting'))) %}
+            {% if ss %} {{ ((ss - now()).total_seconds() / 60) | round(0) }} {% else %} N/A {% endif %}
+
+      # Night Window Active (cutoff -> 04:45)
+      - name: "Night Window Active"
+        unique_id: trial_night_window_active
+        state: >-
+          {% set cutoff = states('input_datetime.evening_time_cutoff') %}
+          {% if cutoff in ['', 'unknown', 'unavailable'] %}
+            false
+          {% else %}
+            {% set now_t = now().strftime('%H:%M:%S') %}
+            {{ (now_t >= cutoff) or (now_t < '04:45:00') }}
+          {% endif %}
+        attributes:
+          cutoff: "{{ states('input_datetime.evening_time_cutoff') }}"
+
+      # Ramp Status Summary
+      - name: "Morning Ramp Status Summary"
+        unique_id: trial_morning_ramp_status_summary
+        state: >-
+          {% set active = is_state('input_boolean.sleep_in_ramp_active','on') %}
+          {% if not active %} Idle {% else %} Active {% endif %}
+        attributes:
+          classification: "{{ states('sensor.trial_morning_classification') }}"
+          end_time: "{{ states('input_datetime.ramp_calculated_end_time') }}"
+          progress_pct: "{{ states('sensor.sleep_in_ramp_progress') }}"
+

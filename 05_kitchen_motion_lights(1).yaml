@@ -1,0 +1,43 @@
+################################################################################
+# 🍽️ KITCHEN AUTOMATION PACKAGE v2.3.1 - add DB-backed guard helper
+# File: /config/packages/05_kitchen_motion_lights.yaml
+# Only NEW helper here: input_text.morning_ramp_last_run_date
+#
+# FIXED: Automation condition now points to the correct pyscript.home_state
+################################################################################
+
+# --- NEW HELPER (stores YYYY-MM-DD of last ramp run) ---
+input_text:
+  morning_ramp_last_run_date:
+    name: "Morning Ramp - Last Run (date)"
+    max: 10  # format: 2025-09-01
+
+# Tuck it away from default UI
+homeassistant:
+  customize:
+    input_text.morning_ramp_last_run_date:
+      entity_category: diagnostic
+      icon: mdi:calendar-check
+
+# --- AUTOMATIONS (no duplicate helpers here) ---
+automation:
+  - id: kitchen_pyscript_morning_ramp_trigger
+    alias: "Kitchen - Morning Ramp PyScript Trigger (motion)"
+    mode: single
+    trigger:
+      - trigger: state
+        entity_id:
+          - binary_sensor.aqara_motion_sensor_p1_occupancy
+          - binary_sensor.kitchen_iris_frig_occupancy
+        to: "on"
+    condition:
+      - condition: state
+        entity_id: input_boolean.sleep_in_ramp_system_enable
+        state: "on"
+      - condition: state
+        entity_id: pyscript.home_state # <-- CORRECTED ENTITY
+        state: "Night"
+    action:
+      - action: pyscript.morning_ramp_first_motion
+        data:
+          sensor: "{{ trigger.entity_id }}"

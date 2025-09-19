@@ -1,0 +1,238 @@
+################################################################################
+# SMART LOCK PACKAGE
+# Save as: /config/packages/smartlock_package.yaml
+# Author: ChatGPT (for Frank S Elaschat)
+# Updated: 2025-09-02
+#
+# Features:
+# 1) Unlock on arrival (either iPhone enters home zone)
+# 2) Instant auto-lock on door close
+# 3) Away enforce after 5 minutes (lock + notify last departed phone)
+# 4) Door left open alert while away (notify last departed phone)
+################################################################################
+
+################################################################################
+# HELPERS
+################################################################################
+input_boolean:
+  smart_lock_auto_unlock:
+    name: "Auto Unlock on Arrival"
+    icon: mdi:lock-open
+    initial: true
+  smart_lock_auto_lock:
+    name: "Auto-Lock When Door Closes"
+    icon: mdi:lock
+    initial: true
+  smart_lock_away_enforce:
+    name: "Enforce Locked While Away"
+    icon: mdi:shield-lock
+    initial: true
+
+input_text:
+  smart_lock_last_departed:
+    name: "Last Phone Departed"
+    initial: none
+
+################################################################################
+# AUTOMATIONS
+################################################################################
+automation:
+  # 1) Unlock on arrival
+  - id: unlock_door_on_arrival
+    alias: "Unlock door when either iPhone arrives home"
+    description: "Auto unlock front door when either phone enters the home zone"
+    triggers:
+      - trigger: zone
+        entity_id: device_tracker.iphone15
+        zone: zone.home
+        event: enter
+      - trigger: zone
+        entity_id: device_tracker.work_iphone
+        zone: zone.home
+        event: enter
+    conditions:
+      - condition: state
+        entity_id: input_boolean.smart_lock_auto_unlock
+        state: "on"
+    actions:
+      - action: logbook.log
+        data:
+          name: Smart Lock
+          message: "Arrival unlock triggered by {{ trigger.entity_id or trigger.platform }}"
+          entity_id: lock.aqara_smart_lock_u100_lock
+      - action: lock.unlock
+        target:
+          entity_id: lock.aqara_smart_lock_u100_lock
+      - action: notify.mobile_app_iphone15
+        data:
+          message: "The front door was unlocked (arrival)."
+      - action: notify.mobile_app_rrvqklh23h_iphone
+        data:
+          message: "The front door was unlocked (arrival)."
+    mode: single
+
+  # 2) Instant auto-lock when the door closes
+  - id: auto_lock_when_door_closes
+    alias: "Auto-lock instantly when front door closes"
+    description: "Locks immediately when contact sensor reports closed"
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.front_door_contact_contact
+        from: "on"   # open
+        to: "off"    # closed
+    conditions:
+      - condition: state
+        entity_id: input_boolean.smart_lock_auto_lock
+        state: "on"
+      - condition: state
+        entity_id: lock.aqara_smart_lock_u100_lock
+        state: "unlocked"
+    actions:
+      - action: logbook.log
+        data:
+          name: Smart Lock
+          message: "Door closed → locking now"
+          entity_id: lock.aqara_smart_lock_u100_lock
+      - action: lock.lock
+        target:
+          entity_id: lock.aqara_smart_lock_u100_lock
+      - action: notify.mobile_app_iphone15
+        data:
+          message: "The front door auto-locked instantly after closing."
+      - action: notify.mobile_app_rrvqklh23h_iphone
+        data:
+          message: "The front door auto-locked instantly after closing."
+    mode: restart
+
+  # 3) Track which phone left last
+  - id: track_last_departed_phone
+    alias: "Track last phone departed"
+    triggers:
+      - trigger: zone
+        entity_id: device_tracker.iphone15
+        zone: zone.home
+        event: leave
+        id: iphone15_leave
+      - trigger: zone
+        entity_id: device_tracker.work_iphone
+        zone: zone.home
+        event: leave
+        id: work_iphone_leave
+    actions:
+      - choose:
+          - conditions:
+              - condition: trigger
+                id: iphone15_leave
+            sequence:
+              - action: input_text.set_value
+                target:
+                  entity_id: input_text.smart_lock_last_departed
+                data:
+                  value: iphone15
+              - action: logbook.log
+                data:
+                  name: Smart Lock
+                  message: "Last departed set to iphone15"
+          - conditions:
+              - condition: trigger
+                id: work_iphone_leave
+            sequence:
+              - action: input_text.set_value
+                target:
+                  entity_id: input_text.smart_lock_last_departed
+                data:
+                  value: work_iphone
+              - action: logbook.log
+                data:
+                  name: Smart Lock
+                  message: "Last departed set to work_iphone"
+    mode: restart
+
+  # 4) Away enforce after 5 minutes (notify only last departed phone)
+  - id: away_enforce_after_5min
+    alias: "Away enforce after 5 minutes"
+    description: "After 5 minutes away, lock if needed and notify only the last departed phone"
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.both_phones_home
+        to: "off"
+        for:
+          minutes: 5
+    conditions:
+      - condition: state
+        entity_id: input_boolean.smart_lock_away_enforce
+        state: "on"
+      - condition: state
+        entity_id: binary_sensor.both_phones_home
+        state: "off"
+      - condition: state
+        entity_id: binary_sensor.front_door_contact_contact
+        state: "off"   # door must be closed
+    actions:
+      - action: logbook.log
+        data:
+          name: Smart Lock
+          message: "Away 5-min check running"
+          entity_id: lock.aqara_smart_lock_u100_lock
+      - choose:
+          - conditions:
+              - condition: state
+                entity_id: lock.aqara_smart_lock_u100_lock
+                state: "unlocked"
+            sequence:
+              - action: lock.lock
+                target:
+                  entity_id: lock.aqara_smart_lock_u100_lock
+              - choose:
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ states('input_text.smart_lock_last_departed') == 'iphone15' }}"
+                    sequence:
+                      - action: notify.mobile_app_iphone15
+                        data:
+                          message: "Away check: Door was still unlocked after 5 minutes, locking now."
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ states('input_text.smart_lock_last_departed') == 'work_iphone' }}"
+                    sequence:
+                      - action: notify.mobile_app_rrvqklh23h_iphone
+                        data:
+                          message: "Away check: Door was still unlocked after 5 minutes, locking now."
+    mode: single
+
+  # 5) Door left open alert while away
+  - id: away_door_left_open
+    alias: "Away alert if door left open"
+    description: "If both phones are away and door stays open >2 minutes, notify last departed phone"
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.front_door_contact_contact
+        to: "on"    # open
+        for:
+          minutes: 2
+    conditions:
+      - condition: state
+        entity_id: binary_sensor.both_phones_home
+        state: "off"
+    actions:
+      - action: logbook.log
+        data:
+          name: Smart Lock
+          message: "Door left open 2+ min while away"
+          entity_id: lock.aqara_smart_lock_u100_lock
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: "{{ states('input_text.smart_lock_last_departed') == 'iphone15' }}"
+            sequence:
+              - action: notify.mobile_app_iphone15
+                data:
+                  message: "Away alert: The front door has been left open for 2 minutes."
+          - conditions:
+              - condition: template
+                value_template: "{{ states('input_text.smart_lock_last_departed') == 'work_iphone' }}"
+            sequence:
+              - action: notify.mobile_app_rrvqklh23h_iphone
+                data:
+                  message: "Away alert: The front door has been left open for 2 minutes."
+    mode: single

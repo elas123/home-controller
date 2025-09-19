@@ -1,0 +1,149 @@
+#################################################################
+# COMPLETE PACKAGE 2: PHONE PATTERN DETECTION + DASHBOARD SCRIPTS
+# Date: 2025-08-07
+# Status: Ready for deployment with full dashboard support
+#################################################################
+
+input_boolean:
+  # MASTER TOGGLE - Disable entire package
+  enable_phone_pattern_detection:
+    name: "Enable Phone Pattern Detection"
+    icon: mdi:cellphone-wireless
+    initial: true
+    
+  # Individual feature toggles
+  enable_10am_detection:
+    name: "Enable 10 AM Detection"
+    icon: mdi:clock-time-ten
+    initial: true
+    
+  enable_2pm_check:
+    name: "Enable 2 PM Check"
+    icon: mdi:clock-time-two
+    initial: true
+    
+  enable_welcome_home:
+    name: "Enable Welcome Home Notifications"
+    icon: mdi:home-heart
+    initial: true
+
+  already_asked_today:
+    name: "Already Asked About Status Today"
+    icon: mdi:message-check
+    initial: false
+
+input_datetime:
+  personal_phone_left_alone:
+    name: Personal Phone Left Alone
+    has_date: true
+    has_time: true
+    icon: mdi:cellphone
+  work_phone_home_alone:
+    name: Work Phone Home Alone Since
+    has_date: true
+    has_time: true
+    icon: mdi:cellphone-off
+
+input_number:
+  travel_time_to_work:
+    name: "Travel Time to Work"
+    min: 5
+    max: 60
+    step: 5
+    unit_of_measurement: "minutes"
+    initial: 20
+    icon: mdi:car-clock
+
+template:
+  - sensor:
+      - name: "Minutes Until Leave"
+        state: >-
+          {% set leave_time = "05:40" %}
+          {% set leave_hour = 5 %}
+          {% set leave_minute = 40 %}
+          {% set now_minutes = now().hour * 60 + now().minute %}
+          {% set leave_minutes = leave_hour * 60 + leave_minute %}
+          
+          {% if now_minutes < leave_minutes %}
+            {{ leave_minutes - now_minutes }}
+          {% elif now_minutes < leave_minutes + 60 %}
+            {{ leave_minutes + (24 * 60) - now_minutes }}
+          {% else %}
+            0
+          {% endif %}
+        unit_of_measurement: "minutes"
+        icon: mdi:clock-time-eight
+
+  - binary_sensor:
+      - name: "Unusual Phone Pattern"
+        state: >-
+          {% if not is_state('input_boolean.enable_phone_pattern_detection', 'on') %}
+            off
+          {% else %}
+            {% set personal_home = is_state('device_tracker.iphone15', 'home') %}
+            {% set work_home = is_state('device_tracker.work_iphone', 'home') %}
+            {% set weekday = now().weekday() %}
+            {% set work_hours = 6 <= now().hour < 15 %}
+            
+            {% set should_be_working = is_state('sensor.should_be_working_today', 'True') %}
+            
+            {% if should_be_working and work_hours %}
+              {% if personal_home and work_home %}
+                true
+              {% elif not personal_home and work_home %}
+                true
+              {% elif personal_home and not work_home %}
+                true
+              {% else %}
+                false
+              {% endif %}
+            {% else %}
+              false
+            {% endif %}
+          {% endif %}
+        attributes:
+          pattern_type: >-
+            {% set personal_home = is_state('device_tracker.iphone15', 'home') %}
+            {% set work_home = is_state('device_tracker.work_iphone', 'home') %}
+            {% if personal_home and work_home %}
+              both_home
+            {% elif not personal_home and work_home %}
+              personal_away_work_home
+            {% elif personal_home and not work_home %}
+              personal_home_work_away
+            {% else %}
+              both_away_normal
+            {% endif %}
+          description: >-
+            {% set pattern = this.attributes.pattern_type | default('unknown') %}
+            {% if pattern == 'both_home' %}
+              Both phones home during work hours
+            {% elif pattern == 'personal_away_work_home' %}
+              Out with personal phone, work phone at home
+            {% elif pattern == 'personal_home_work_away' %}
+              Work phone gone, personal home (forgot it?)
+            {% else %}
+              Normal work pattern
+            {% endif %}
+
+# SCRIPTS FOR DASHBOARD FUNCTIONALITY
+script:
+  test_phone_pattern_notification:
+    alias: "🧪 Test Phone Pattern Notification"
+    mode: single
+    sequence:
+      - variables:
+          pattern_desc: "{{ state_attr('binary_sensor.unusual_phone_pattern', 'description') }}"
+          pattern_type: "{{ state_attr('binary_sensor.unusual_phone_pattern', 'pattern_type') }}"
+      - action: notify.mobile_app_iphone15
+        data:
+          title: "🧪 Test Phone Pattern Notification"
+          message: >-
+            This is a test notification.
+            Current pattern: {{ pattern_desc }}
+            Pattern type: {{ pattern_type }}
+            System status: {{ 'Active' if is_state('input_boolean.enable_phone_pattern_detection', 'on') else 'Disabled' }}
+          data:
+            actions:
+              - action: "TEST_PHONE_RESPONSE"
+                title:

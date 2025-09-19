@@ -1,0 +1,360 @@
+################################################################################
+# INTELLIGENT LIGHTING PACKAGE v3.8 - EVENING RAMP REMOVED
+# Author: Frank S Elaschat
+# Updated: 2025-09-01
+# Status: Evening ramp logic removed from this package (controller owns it)
+################################################################################
+
+template:
+  - sensor:
+      - name: "Intelligent Brightness Master"
+        unit_of_measurement: "%"
+        availability: >-
+          {{ states('input_select.home_state') not in ['unknown', 'unavailable'] and
+             states('weather.pirateweather') not in ['unknown', 'unavailable'] }}
+        state: >-
+          {% if is_state('input_boolean.sleep_in_ramp_active', 'on') %}
+            {{ states('sensor.sleep_in_ramp_brightness') | int(10) }}
+          {% else %}
+            {% set mode = states('input_select.home_state') %}
+            {% if mode == 'Night' %}
+              {{ states('input_number.night_max_brightness')|int(1) }}
+            {% elif mode == 'Early Morning' and is_state('binary_sensor.working_today', 'on') %}
+              {% set time_decimal = now().hour + (now().minute / 60) %}
+              {% if 4.83 <= time_decimal <= 5.67 %}
+                {% set start_bright = states('input_number.gradient_start_brightness')|float(10) %}
+                {% set end_bright = states('input_number.gradient_end_brightness')|float(55) %}
+                {% set progress = (time_decimal - 4.83) / 0.84 %}
+                {{ (start_bright + ((end_bright - start_bright) * progress)) | round(0) }}
+              {% elif time_decimal < 4.83 %}
+                {{ states('input_number.gradient_start_brightness')|int(10) }}
+              {% else %}
+                {{ states('input_number.gradient_end_brightness')|int(55) }}
+              {% endif %}
+            {% elif mode == 'Day' %}
+              {% set cloud_coverage = state_attr('weather.pirateweather', 'cloud_coverage') | int(0) %}
+              {% set base = states('input_number.als_day_base_brightness') | float(30) %}
+              {% set max_bright = states('input_number.als_day_max_brightness') | float(80) %}
+              {% set cloud_boost_pct = states('input_number.als_cloudy_boost') | float(15) %}
+              {% set winter_boost = states('input_number.als_winter_boost') | float(10) %}
+              {% set fall_boost = states('input_number.als_fall_boost') | float(5) %}
+              {% set cloud_boost = (cloud_coverage / 100) * cloud_boost_pct %}
+              {% set season = states('sensor.current_season') %}
+              {% set season_adj = winter_boost if season == 'Winter' else fall_boost if season == 'Fall' else 0 %}
+              {% set final = base + cloud_boost + season_adj %}
+              {{ [final, max_bright] | min | round(0) }}
+            {% elif mode == 'Evening' %}
+              {{ states('input_number.evening_peak_brightness') | int(70) }}
+            {% elif mode == 'Away' %}
+              0
+            {% else %}
+              50
+            {% endif %}
+          {% endif %}
+        icon: mdi:brightness-6
+
+      - name: "Intelligent Temperature Master"
+        unit_of_measurement: "K"
+        availability: >-
+          {{ states('input_select.home_state') not in ['unknown', 'unavailable'] }}
+        state: >-
+          {% if is_state('input_boolean.sleep_in_ramp_active', 'on') %}
+            {{ states('sensor.sleep_in_ramp_temperature') | int(3000) }}
+          {% else %}
+            {% set mode = states('input_select.home_state') %}
+            {% if mode == 'Night' %}
+              {{ states('input_number.night_temp')|int(1800) }}
+            {% elif mode == 'Early Morning' and is_state('binary_sensor.working_today', 'on') %}
+              {% set time_decimal = now().hour + (now().minute / 60) %}
+              {% if 4.83 <= time_decimal <= 5.67 %}
+                {% set start_temp = states('input_number.gradient_start_temp')|float(2000) %}
+                {% set end_temp = states('input_number.gradient_end_temp')|float(4000) %}
+                {% set progress = (time_decimal - 4.83) / 0.84 %}
+                {{ (start_temp + ((end_temp - start_temp) * progress)) | round(0) }}
+              {% elif time_decimal < 4.83 %}
+                {{ states('input_number.gradient_start_temp')|int(2000) }}
+              {% else %}
+                {{ states('input_number.gradient_end_temp')|int(4000) }}
+              {% endif %}
+            {% elif mode == 'Day' %}
+              {% set season = states('sensor.current_season') %}
+              {% if season == 'Winter' %} 3800
+              {% elif season == 'Summer' %} 4200
+              {% else %} 4000
+              {% endif %}
+            {% elif mode == 'Evening' %}
+              {{ states('input_number.evening_temp_start') | int(4000) }}
+            {% else %} 3000
+            {% endif %}
+          {% endif %}
+        icon: mdi:thermometer
+
+      - name: "Intelligent Brightness Bedroom"
+        unit_of_measurement: "%"
+        availability: >-
+          {{ states('input_select.home_state') not in ['unknown', 'unavailable'] }}
+        state: >-
+          {% set use_custom = is_state('input_boolean.bedroom_use_custom_settings', 'on') %}
+          {% set mode = states('input_select.home_state') %}
+          {% if use_custom and mode in ['Day', 'Early Morning'] %}
+            {{ states('input_number.bedroom_custom_day_brightness') | int(60) }}
+          {% elif use_custom and mode == 'Evening' %}
+            {{ states('input_number.bedroom_custom_evening_brightness') | int(40) }}
+          {% else %}
+            {% if is_state('input_boolean.sleep_in_ramp_active', 'on') %}
+              {{ states('sensor.sleep_in_ramp_brightness') | int(50) }}
+            {% else %}
+              {% set cloud_coverage = state_attr('weather.pirateweather', 'cloud_coverage') | int(0) %}
+              {% if mode == 'Night' %} 1
+              {% elif mode == 'Day' %}
+                {{ 50 if cloud_coverage > 50 else 30 }}
+              {% elif mode == 'Evening' %} 40
+              {% else %}
+                {{ states('sensor.intelligent_brightness_master') | int(50) }}
+              {% endif %}
+            {% endif %}
+          {% endif %}
+        icon: mdi:brightness-6
+
+      - name: "Intelligent Temperature Bedroom"
+        unit_of_measurement: "K"
+        availability: >-
+          {{ states('input_select.home_state') not in ['unknown', 'unavailable'] }}
+        state: >-
+          {% set use_custom = is_state('input_boolean.bedroom_use_custom_settings', 'on') %}
+          {% set mode = states('input_select.home_state') %}
+          {% if use_custom and mode in ['Day', 'Early Morning'] %}
+            {{ states('input_number.bedroom_custom_day_temp') | int(4500) }}
+          {% elif use_custom and mode == 'Evening' %}
+            {{ states('input_number.bedroom_custom_evening_temp') | int(2700) }}
+          {% else %}
+            {{ states('sensor.intelligent_temperature_master') | int(3000) }}
+          {% endif %}
+        icon: mdi:thermometer
+        
+      - name: "Bedroom Intelligent Brightness"
+        unique_id: bedroom_intelligent_brightness_system
+        unit_of_measurement: "%"
+        availability: >-
+          {{ states('input_select.home_state') not in ['unknown', 'unavailable'] }}
+        state: >-
+          {% set home_mode = states('input_select.home_state') %}
+          {% if home_mode == 'Night' %}
+            {{ states('input_number.night_max_brightness') | int(1) }}
+          {% elif is_state('input_boolean.adaptive_learning_enabled', 'on') and state_attr('sensor.learned_brightness_bedroom', 'using_learned') %}
+            {{ states('sensor.learned_brightness_bedroom') | int(40) }}
+          {% elif is_state('input_boolean.intelligent_lighting_enable', 'on') %}
+            {{ states('sensor.intelligent_brightness_bedroom') | int(40) }}
+          {% else %}
+            {% if home_mode in ['Evening', 'Early Morning'] %}
+              40
+            {% elif home_mode == 'Day' %}
+              50
+            {% else %}
+              40
+            {% endif %}
+          {% endif %}
+        attributes:
+          calculation_source: >
+            {% set home_mode = states('input_select.home_state') %}
+            {% if home_mode == 'Night' %} Night Mode Lock
+            {% elif is_state('input_boolean.adaptive_learning_enabled', 'on') and state_attr('sensor.learned_brightness_bedroom', 'using_learned') %} Adaptive Learning
+            {% elif is_state('input_boolean.intelligent_lighting_enable', 'on') %} Intelligent System
+            {% else %} Fallback Values
+            {% endif %}
+
+      - name: "Intelligent Brightness Living Room"
+        unit_of_measurement: "%"
+        availability: >-
+          {{ states('input_select.home_state') not in ['unknown', 'unavailable'] }}
+        state: >-
+          {% set use_custom = is_state('input_boolean.living_room_use_custom_settings', 'on') %}
+          {% set mode = states('input_select.home_state') %}
+          {% if use_custom and mode in ['Day', 'Early Morning'] %}
+            {{ states('input_number.living_room_custom_day_brightness') | int(50) }}
+          {% elif use_custom and mode == 'Evening' %}
+            {{ states('input_number.living_room_custom_evening_brightness') | int(35) }}
+          {% else %}
+            {% if is_state('input_boolean.sleep_in_ramp_active', 'on') %}
+              {{ states('sensor.sleep_in_ramp_brightness') | int(50) }}
+            {% else %}
+              {% set cloud_coverage = state_attr('weather.pirateweather', 'cloud_coverage') | int(0) %}
+              {% if mode == 'Night' %} 0
+              {% elif mode == 'Day' %}
+                {{ 45 if cloud_coverage > 50 else 0 }}
+              {% elif mode == 'Evening' %} 40
+              {% else %}
+                {{ states('sensor.intelligent_brightness_master') | int(50) }}
+              {% endif %}
+            {% endif %}
+          {% endif %}
+        icon: mdi:brightness-6
+
+      - name: "Intelligent Temperature Living Room"
+        unit_of_measurement: "K"
+        availability: >-
+          {{ states('input_select.home_state') not in ['unknown', 'unavailable'] }}
+        state: >-
+          {% set use_custom = is_state('input_boolean.living_room_use_custom_settings', 'on') %}
+          {% set mode = states('input_select.home_state') %}
+          {% if use_custom and mode in ['Day', 'Early Morning'] %}
+            {{ states('input_number.living_room_custom_day_temp') | int(5000) }}
+          {% elif use_custom and mode == 'Evening' %}
+            {{ states('input_number.living_room_custom_evening_temp') | int(2500) }}
+          {% else %}
+            {{ states('sensor.intelligent_temperature_master') | int(3000) }}
+          {% endif %}
+        icon: mdi:thermometer
+      
+      - name: "Intelligent Brightness Kitchen"
+        unit_of_measurement: "%"
+        availability: >-
+          {{ states('input_select.home_state') not in ['unknown', 'unavailable'] }}
+        state: >-
+          {% if is_state('input_boolean.sleep_in_ramp_active', 'on') %}
+            {{ states('sensor.sleep_in_ramp_brightness') | int(50) }}
+          {% else %}
+            {% set mode = states('input_select.home_state') %}
+            {% if mode == 'Night' %} 0
+            {% else %}
+              {{ states('sensor.intelligent_brightness_master') | int(50) }}
+            {% endif %}
+          {% endif %}
+        icon: mdi:brightness-6
+
+      - name: "Intelligent Brightness Bathroom"
+        unit_of_measurement: "%"
+        availability: >-
+          {{ states('input_select.home_state') not in ['unknown', 'unavailable'] }}
+        state: >-
+          {% if is_state('input_boolean.sleep_in_ramp_active', 'on') %}
+            {{ states('sensor.sleep_in_ramp_brightness') | int(50) }}
+          {% else %}
+            {% set mode = states('input_select.home_state') %}
+            {% set cloud_coverage = state_attr('weather.pirateweather', 'cloud_coverage') | int(0) %}
+            {% if mode == 'Night' %} 1
+            {% elif mode == 'Day' %}
+              {{ 70 if cloud_coverage > 50 else 30 }}
+            {% elif mode == 'Evening' %} 50
+            {% else %}
+              {{ states('sensor.intelligent_brightness_master') | int(50) }}
+            {% endif %}
+          {% endif %}
+        icon: mdi:brightness-6
+
+      - name: "Intelligent Brightness Hallway"
+        unit_of_measurement: "%"
+        availability: >-
+          {{ states('input_select.home_state') not in ['unknown', 'unavailable'] }}
+        state: >-
+          {% if is_state('input_boolean.sleep_in_ramp_active', 'on') %}
+            {{ states('sensor.sleep_in_ramp_brightness') | int(50) }}
+          {% else %}
+            {% set mode = states('input_select.home_state') %}
+            {% set cloud_coverage = state_attr('weather.pirateweather', 'cloud_coverage') | int(0) %}
+            {% if mode == 'Night' %} 1
+            {% elif mode == 'Day' %}
+              {{ 20 if cloud_coverage > 50 else 10 }}
+            {% elif mode == 'Evening' %} 15
+            {% else %}
+              {{ states('sensor.intelligent_brightness_master') | int(50) }}
+            {% endif %}
+          {% endif %}
+        icon: mdi:brightness-6
+
+      - name: "Intelligent Brightness Laundry"
+        unit_of_measurement: "%"
+        availability: >-
+          {{ states('input_select.home_state') not in ['unknown', 'unavailable'] }}
+        state: >-
+          {% if is_state('input_boolean.sleep_in_ramp_active', 'on') %}
+            {{ states('sensor.sleep_in_ramp_brightness') | int(50) }}
+          {% else %}
+            {% set mode = states('input_select.home_state') %}
+            {% set cloud_coverage = state_attr('weather.pirateweather', 'cloud_coverage') | int(0) %}
+            {% if mode == 'Night' %} 1
+            {% elif mode == 'Day' %}
+              {{ 80 if cloud_coverage > 50 else 0 }}
+            {% elif mode == 'Evening' %} 60
+            {% else %}
+              {{ states('sensor.intelligent_brightness_master') | int(50) }}
+            {% endif %}
+          {% endif %}
+        icon: mdi:brightness-6
+
+      - name: "Intelligent Lighting Diagnostic"
+        availability: >-
+          {{ states('input_select.home_state') not in ['unknown', 'unavailable'] }}
+        state: >-
+          {% set enabled = is_state('input_boolean.intelligent_lighting_enable', 'on') %}
+          {% set mode = states('input_select.home_state') %}
+          {% set brightness = states('sensor.intelligent_brightness_master') | int(0) %}
+          {% if not enabled %} System Disabled
+          {% elif mode == 'Night' %} Night - {{ brightness }}%
+          {% elif mode == 'Evening' %} Evening - {{ brightness }}%
+          {% elif mode == 'Day' %} Day - {{ brightness }}%
+          {% elif mode == 'Early Morning' %} Early Morning - {{ brightness }}%
+          {% elif mode == 'Away' %} Away - {{ brightness }}%
+          {% else %} {{ mode }} - {{ brightness }}%
+          {% endif %}
+        icon: >-
+          {% if not is_state('input_boolean.intelligent_lighting_enable', 'on') %} mdi:lightbulb-off
+          {% else %}
+            {% set temp = states('sensor.intelligent_temperature_master') | float(3000) %}
+            {% if temp < 2500 %} mdi:weather-night
+            {% elif temp < 3500 %} mdi:weather-sunset
+            {% else %} mdi:weather-sunny
+            {% endif %}
+          {% endif %}
+        attributes:
+          bedroom_brightness: "{{ states('sensor.intelligent_brightness_bedroom') | int(0) }}%"
+          kitchen_brightness: "{{ states('sensor.intelligent_brightness_kitchen') | int(0) }}%"
+          bathroom_brightness: "{{ states('sensor.intelligent_brightness_bathroom') | int(0) }}%"
+          hallway_brightness: "{{ states('sensor.intelligent_brightness_hallway') | int(0) }}%"
+          laundry_brightness: "{{ states('sensor.intelligent_brightness_laundry') | int(0) }}%"
+          temperature: "{{ states('sensor.intelligent_temperature_master') | int(3000) }}K"
+          home_state: "{{ states('input_select.home_state') }}"
+          system_enabled: "{{ is_state('input_boolean.intelligent_lighting_enable', 'on') }}"
+
+      - name: "Bathroom Intelligent Brightness"
+        unique_id: bathroom_intelligent_brightness_system
+        unit_of_measurement: "%"
+        availability: >-
+          {{ states('input_select.home_state') not in ['unknown', 'unavailable'] }}
+        state: >-
+          {% set home_mode = states('input_select.home_state') %}
+          {% set hold_mode = is_state('input_boolean.bathroom_100_percent_hold', 'on') %}
+          {% set override_active = is_state('input_boolean.bathroom_adaptive_override', 'on') %}
+          {% if hold_mode %} 100
+          {% elif override_active %}
+            {{ states('input_number.bathroom_override_brightness') | int(100) }}
+          {% elif home_mode == 'Night' %}
+            {{ states('input_number.bathroom_night_max_brightness') | int(1) }}
+          {% elif is_state('input_boolean.adaptive_learning_enabled', 'on') and state_attr('sensor.learned_brightness_bathroom', 'using_learned') %}
+            {{ states('sensor.learned_brightness_bathroom') | int(50) }}
+          {% elif is_state('input_boolean.intelligent_lighting_enable', 'on') %}
+            {{ states('sensor.intelligent_brightness_bathroom') | int(50) }}
+          {% else %}
+            {% if home_mode in ['Evening', 'Early Morning'] %}
+              {{ states('input_number.bathroom_fallback_evening_brightness') | int(50) }}
+            {% elif home_mode == 'Day' %}
+              {{ states('input_number.bathroom_fallback_day_brightness') | int(70) }}
+            {% else %} 50
+            {% endif %}
+          {% endif %}
+        attributes:
+          calculation_source: >
+            {% set hold_mode = is_state('input_boolean.bathroom_100_percent_hold', 'on') %}
+            {% set override_active = is_state('input_boolean.bathroom_adaptive_override', 'on') %}
+            {% set home_mode = states('input_select.home_state') %}
+            {% if hold_mode %} Door Closed Hold
+            {% elif override_active %} Manual Override
+            {% elif home_mode == 'Night' %} Night Mode Lock
+            {% elif is_state('input_boolean.adaptive_learning_enabled', 'on') and state_attr('sensor.learned_brightness_bathroom', 'using_learned') %} Adaptive Learning
+            {% elif is_state('input_boolean.intelligent_lighting_enable', 'on') %} Intelligent System
+            {% else %} Fallback Values
+            {% endif %}
+
+automation: []
+
+script: {}

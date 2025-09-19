@@ -1,0 +1,60 @@
+################################################################################
+# 🧪 SIMPLE TEST SENSORS - Debug version to test if basic sensors load
+# Try this first to see if the sensors load at all
+################################################################################
+
+template:
+  - sensor:
+      # Simple test sensor - should always load
+      - name: "Live Evening Trigger Analysis"
+        unique_id: live_evening_trigger_analysis_simple
+        state: "🟢 Test Working"
+        icon: mdi:weather-sunset-down
+
+      # Simple learning status sensor
+      - name: "Learned Behavior Status" 
+        unique_id: learned_behavior_status_simple
+        state: "🧠 Learning Active"
+        icon: mdi:brain
+
+      # Simple bedroom analysis
+      - name: "Live Bedroom Teaching Analysis"
+        unique_id: live_bedroom_teaching_analysis_simple
+        state: "🛏️ Bedroom Test"
+        icon: mdi:bed
+
+      # Simple kitchen analysis
+      - name: "Live Kitchen Teaching Analysis"
+        unique_id: live_kitchen_teaching_analysis_simple
+        state: "🍽️ Kitchen Test"
+        icon: mdi:silverware-fork-knife
+
+      # Simple bathroom analysis
+      - name: "Live Bathroom Teaching Analysis"
+        unique_id: live_bathroom_teaching_analysis_simple
+        state: "🛁 Bathroom Test"
+        icon: mdi:shower
+
+      # Simple hallway analysis
+      - name: "Live Hallway Teaching Analysis"
+        unique_id: live_hallway_teaching_analysis_simple
+        state: "🚪 Hallway Test"
+        icon: mdi:door-open
+
+      # Simple laundry analysis
+      - name: "Live Laundry Teaching Analysis"
+        unique_id: live_laundry_teaching_analysis_simple
+        state: "🧺 Laundry Test"
+        icon: mdi:washing-machine
+
+      # Simple living room analysis
+      - name: "Live Living Room Teaching Analysis"
+        unique_id: live_livingroom_teaching_analysis_simple
+        state: "🛋️ Living Room Test"
+        icon: mdi:sofa
+
+      # Simple learning management
+      - name: "Learning Management Dashboard"
+        unique_id: learning_management_dashboard_simple
+        state: "📊 Management Test"
+        icon: mdi:cog

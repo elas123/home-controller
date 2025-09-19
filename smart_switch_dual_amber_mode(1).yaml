@@ -1,0 +1,346 @@
+# Smart Switch Dual Amber Mode Package
+# Package Name: smart_switch_dual_amber_mode.yaml
+# Version: 1.1.1
+# Updated: August 2, 2025 - Helper names fixed for duplicate conflict
+# Author: ChatGPT for frank s elaschat
+
+input_boolean:
+  smart_switch_1_amber_mode_enable:
+    name: "Switch 1 Amber Mode (Smart)"
+    icon: mdi:lightbulb-night
+    initial: true
+
+  smart_switch_2_amber_mode_enable:
+    name: "Switch 2 Amber Mode (Smart)"
+    icon: mdi:lightbulb-night
+    initial: true
+
+  smart_switch_1_manual_amber_trigger:
+    name: "Switch 1 Manual Amber (Smart)"
+    icon: mdi:gesture-tap
+    initial: false
+
+  smart_switch_2_manual_amber_trigger:
+    name: "Switch 2 Manual Amber (Smart)"
+    icon: mdi:gesture-tap
+    initial: false
+
+input_select:
+  smart_switch_1_amber_trigger_mode:
+    name: "Switch 1 Trigger Mode (Smart)"
+    options:
+      - "Manual Only"
+      - "Night Mode Auto"
+      - "Evening Auto"
+      - "TV Night Mode"
+      - "Motion + Night"
+      - "Always Available"
+    initial: "Night Mode Auto"
+    icon: mdi:lightbulb-auto
+
+  smart_switch_2_amber_trigger_mode:
+    name: "Switch 2 Trigger Mode (Smart)"
+    options:
+      - "Manual Only"
+      - "Night Mode Auto"
+      - "Evening Auto"
+      - "TV Night Mode"
+      - "Motion + Night"
+      - "Always Available"
+    initial: "Night Mode Auto"
+    icon: mdi:lightbulb-auto
+
+input_number:
+  smart_switch_1_amber_delay:
+    name: "Switch 1 Amber Delay (Smart)"
+    min: 0.5
+    max: 5.0
+    step: 0.1
+    unit_of_measurement: "seconds"
+    initial: 1.0
+    icon: mdi:timer-outline
+
+  smart_switch_2_amber_delay:
+    name: "Switch 2 Amber Delay (Smart)"
+    min: 0.5
+    max: 5.0
+    step: 0.1
+    unit_of_measurement: "seconds"
+    initial: 1.0
+    icon: mdi:timer-outline
+
+input_button:
+  smart_switch_1_activate_amber:
+    name: "Switch 1 Activate Amber (Smart)"
+    icon: mdi:lightbulb-night
+
+  smart_switch_1_normal_mode:
+    name: "Switch 1 Normal Mode (Smart)"
+    icon: mdi:lightbulb
+
+  smart_switch_2_activate_amber:
+    name: "Switch 2 Activate Amber (Smart)"
+    icon: mdi:lightbulb-night
+
+  smart_switch_2_normal_mode:
+    name: "Switch 2 Normal Mode (Smart)"
+    icon: mdi:lightbulb
+
+  both_switches_amber:
+    name: "Both Switches Amber (Smart)"
+    icon: mdi:lightbulb-night-outline
+
+  both_switches_normal:
+    name: "Both Switches Normal (Smart)"
+    icon: mdi:lightbulb-multiple
+
+timer:
+  smart_switch_1_amber_sequence:
+    name: "Switch 1 Amber Timer (Smart)"
+    duration: "00:00:05"
+
+  smart_switch_2_amber_sequence:
+    name: "Switch 2 Amber Timer (Smart)"
+    duration: "00:00:05"
+
+automation:
+  # Manual amber triggers
+  - id: smart_switch_1_manual_amber_activate
+    alias: "Smart Switch 1 - Manual Amber Activate"
+    triggers:
+      - trigger: state
+        entity_id: input_boolean.smart_switch_1_manual_amber_trigger
+        to: "on"
+    conditions:
+      - condition: state
+        entity_id: input_boolean.smart_switch_1_amber_mode_enable
+        state: "on"
+    actions:
+      - action: script.smart_switch_1_amber_sequence
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.smart_switch_1_manual_amber_trigger
+      - action: logbook.log
+        data:
+          name: "Smart Switch 1 Amber"
+          message: "Manual amber mode activated"
+          entity_id: light.smart_switch_1
+
+  - id: smart_switch_2_manual_amber_activate
+    alias: "Smart Switch 2 - Manual Amber Activate"
+    triggers:
+      - trigger: state
+        entity_id: input_boolean.smart_switch_2_manual_amber_trigger
+        to: "on"
+    conditions:
+      - condition: state
+        entity_id: input_boolean.smart_switch_2_amber_mode_enable
+        state: "on"
+    actions:
+      - action: script.smart_switch_2_amber_sequence
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.smart_switch_2_manual_amber_trigger
+      - action: logbook.log
+        data:
+          name: "Smart Switch 2 Amber"
+          message: "Manual amber mode activated"
+          entity_id: light.smart_switch_2
+
+  # Button triggers
+  - id: smart_switch_1_amber_button
+    alias: "Smart Switch 1 - Amber Button"
+    triggers:
+      - trigger: state
+        entity_id: input_button.smart_switch_1_activate_amber
+    actions:
+      - action: script.smart_switch_1_amber_sequence
+
+  - id: smart_switch_1_normal_button
+    alias: "Smart Switch 1 - Normal Button"
+    triggers:
+      - trigger: state
+        entity_id: input_button.smart_switch_1_normal_mode
+    actions:
+      - action: light.turn_on
+        target:
+          entity_id: light.smart_switch_1
+        data:
+          brightness_pct: 80
+          color_temp_kelvin: 4000
+
+  - id: smart_switch_2_amber_button
+    alias: "Smart Switch 2 - Amber Button"
+    triggers:
+      - trigger: state
+        entity_id: input_button.smart_switch_2_activate_amber
+    actions:
+      - action: script.smart_switch_2_amber_sequence
+
+  - id: smart_switch_2_normal_button
+    alias: "Smart Switch 2 - Normal Button"
+    triggers:
+      - trigger: state
+        entity_id: input_button.smart_switch_2_normal_mode
+    actions:
+      - action: light.turn_on
+        target:
+          entity_id: light.smart_switch_2
+        data:
+          brightness_pct: 80
+          color_temp_kelvin: 4000
+
+  - id: both_switches_amber_button
+    alias: "Both Switches - Amber Button"
+    triggers:
+      - trigger: state
+        entity_id: input_button.both_switches_amber
+    actions:
+      - action: script.both_switches_amber_mode
+
+  - id: both_switches_normal_button
+    alias: "Both Switches - Normal Button"
+    triggers:
+      - trigger: state
+        entity_id: input_button.both_switches_normal
+    actions:
+      - action: light.turn_on
+        target:
+          entity_id:
+            - light.smart_switch_1
+            - light.smart_switch_2
+        data:
+          brightness_pct: 80
+          color_temp_kelvin: 4000
+
+script:
+  smart_switch_1_amber_sequence:
+    alias: "Smart Switch 1 - Amber Mode Sequence"
+    mode: single
+    sequence:
+      - action: light.turn_on
+        target:
+          entity_id: light.smart_switch_1
+        data:
+          brightness_pct: 100
+      - delay:
+          milliseconds: 500
+      - action: light.turn_off
+        target:
+          entity_id: light.smart_switch_1
+      - delay:
+          seconds: "{{ states('input_number.smart_switch_1_amber_delay') | float }}"
+      - action: light.turn_on
+        target:
+          entity_id: light.smart_switch_1
+        data:
+          brightness_pct: 100
+      - action: logbook.log
+        data:
+          name: "Smart Switch 1 Amber"
+          message: "Amber mode sequence executed (on → off → on)"
+          entity_id: light.smart_switch_1
+
+  smart_switch_2_amber_sequence:
+    alias: "Smart Switch 2 - Amber Mode Sequence"
+    mode: single
+    sequence:
+      - action: light.turn_on
+        target:
+          entity_id: light.smart_switch_2
+        data:
+          brightness_pct: 100
+      - delay:
+          milliseconds: 500
+      - action: light.turn_off
+        target:
+          entity_id: light.smart_switch_2
+      - delay:
+          seconds: "{{ states('input_number.smart_switch_2_amber_delay') | float }}"
+      - action: light.turn_on
+        target:
+          entity_id: light.smart_switch_2
+        data:
+          brightness_pct: 100
+      - action: logbook.log
+        data:
+          name: "Smart Switch 2 Amber"
+          message: "Amber mode sequence executed (on → off → on)"
+          entity_id: light.smart_switch_2
+
+  both_switches_amber_mode:
+    alias: "Both Smart Switches - Amber Mode"
+    mode: single
+    sequence:
+      - parallel:
+          - action: script.smart_switch_1_amber_sequence
+          - action: script.smart_switch_2_amber_sequence
+      - action: logbook.log
+        data:
+          name: "Amber Mode"
+          message: "Both switches amber mode activated"
+          entity_id:
+            - light.smart_switch_1
+            - light.smart_switch_2
+
+template:
+  - binary_sensor:
+      - name: "Smart Switch 1 Amber Mode Active"
+        state: >
+          {{ is_state('light.smart_switch_1', 'on') and
+            (state_attr('light.smart_switch_1', 'brightness') < 100 or
+              (state_attr('light.smart_switch_1', 'color_temp_kelvin') | int(4000)) < 2500) }}
+        icon: >
+          {% if is_state('binary_sensor.smart_switch_1_amber_mode_active', 'on') %}
+            mdi:lightbulb-night
+          {% else %}
+            mdi:lightbulb
+          {% endif %}
+
+      - name: "Smart Switch 2 Amber Mode Active"
+        state: >
+          {{ is_state('light.smart_switch_2', 'on') and
+            (state_attr('light.smart_switch_2', 'brightness') < 100 or
+              (state_attr('light.smart_switch_2', 'color_temp_kelvin') | int(4000)) < 2500) }}
+        icon: >
+          {% if is_state('binary_sensor.smart_switch_2_amber_mode_active', 'on') %}
+            mdi:lightbulb-night
+          {% else %}
+            mdi:lightbulb
+          {% endif %}
+
+      - name: "Both Switches Amber Mode Active"
+        state: >
+          {{ is_state('binary_sensor.smart_switch_1_amber_mode_active', 'on') and
+            is_state('binary_sensor.smart_switch_2_amber_mode_active', 'on') }}
+        icon: >
+          {% if is_state('binary_sensor.both_switches_amber_mode_active', 'on') %}
+            mdi:lightbulb-night-outline
+          {% else %}
+            mdi:lightbulb-multiple
+          {% endif %}
+
+  - sensor:
+      - name: "Smart Switches Amber Status"
+        state: >
+          {% set s1 = is_state('binary_sensor.smart_switch_1_amber_mode_active', 'on') %}
+          {% set s2 = is_state('binary_sensor.smart_switch_2_amber_mode_active', 'on') %}
+          {% if s1 and s2 %}
+            Both Amber
+          {% elif s1 %}
+            Switch 1 Amber
+          {% elif s2 %}
+            Switch 2 Amber
+          {% else %}
+            Normal Mode
+          {% endif %}
+        icon: >
+          {% set s1 = is_state('binary_sensor.smart_switch_1_amber_mode_active', 'on') %}
+          {% set s2 = is_state('binary_sensor.smart_switch_2_amber_mode_active', 'on') %}
+          {% if s1 and s2 %}
+            mdi:lightbulb-night-outline
+          {% elif s1 or s2 %}
+            mdi:lightbulb-night
+          {% else %}
+            mdi:lightbulb-multiple
+          {% endif %}

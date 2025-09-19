@@ -1,0 +1,130 @@
+# 🔧 Developer Debug Template
+# Real-time automation trigger tracking and system state monitoring
+# Add these sensors to see exactly what triggered what and when
+
+template:
+  - sensor:
+      # Automation Trigger History
+      - name: "Last Automation Trigger"
+        unique_id: last_automation_trigger_debug
+        state: >-
+          {% set triggers = [
+            {'entity': 'automation.living_room_auto_control', 'friendly': 'Living Room Auto Control'},
+            {'entity': 'automation.kitchen_motion_night_mode_exit', 'friendly': 'Kitchen Motion Exit'},
+            {'entity': 'automation.morning_ramp_system', 'friendly': 'Morning Ramp System'},
+            {'entity': 'automation.evening_ramp_control', 'friendly': 'Evening Ramp Control'}
+          ] %}
+          {% set last_changed = namespace(time=0, name='None') %}
+          {% for trigger in triggers %}
+            {% set changed = as_timestamp(states[trigger.entity].last_changed) if states[trigger.entity] else 0 %}
+            {% if changed > last_changed.time %}
+              {% set last_changed.time = changed %}
+              {% set last_changed.name = trigger.friendly %}
+            {% endif %}
+          {% endfor %}
+          {{ last_changed.name }}
+        attributes:
+          last_triggered: >-
+            {% set triggers = [
+              {'entity': 'automation.living_room_auto_control', 'friendly': 'Living Room Auto Control'},
+              {'entity': 'automation.kitchen_motion_night_mode_exit', 'friendly': 'Kitchen Motion Exit'},
+              {'entity': 'automation.morning_ramp_system', 'friendly': 'Morning Ramp System'},
+              {'entity': 'automation.evening_ramp_control', 'friendly': 'Evening Ramp Control'}
+            ] %}
+            {% set last_changed = namespace(time=0, entity='') %}
+            {% for trigger in triggers %}
+              {% set changed = as_timestamp(states[trigger.entity].last_changed) if states[trigger.entity] else 0 %}
+              {% if changed > last_changed.time %}
+                {% set last_changed.time = changed %}
+                {% set last_changed.entity = trigger.entity %}
+              {% endif %}
+            {% endfor %}
+            {{ states[last_changed.entity].last_changed.strftime('%I:%M:%S %p') if last_changed.entity else 'Never' }}
+          
+      # Evening Mode Debug Info
+      - name: "Evening Mode Debug"
+        unique_id: evening_mode_debug_info
+        state: >-
+          {% set h = now().hour %}
+          {% set sun = states('sensor.sun_elevation_frequent')|float(0) %}
+          {% set learned = states('input_number.manual_evening_elevation_setting')|float(4) %}
+          {% set cutoff = states('input_datetime.evening_time_cutoff') %}
+          {% set e_override = is_state('input_boolean.evening_mode_override','on') %}
+          
+          {% if e_override %}Override Active
+          {% elif now() > today_at(cutoff) %}Past Cutoff Time
+          {% elif sun < learned and h >= 15 %}Sun Below Threshold ({{ sun }}° < {{ learned }}°)
+          {% elif h < 15 %}Too Early (before 3 PM)
+          {% else %}Sun Above Threshold ({{ sun }}° >= {{ learned }}°)
+          {% endif %}
+        attributes:
+          current_sun: "{{ states('sensor.sun_elevation_frequent')|float(0) }}°"
+          threshold: "{{ states('input_number.manual_evening_elevation_setting')|float(4) }}°"
+          current_hour: "{{ now().hour }}"
+          evening_started: "{{ states('input_datetime.evening_mode_start') }}"
+          cutoff_time: "{{ states('input_datetime.evening_time_cutoff') }}"
+          
+      # Temperature Ramp Status  
+      - name: "Temperature Ramp Status"
+        unique_id: temperature_ramp_status_debug
+        state: >-
+          {% if is_state('input_select.home_state', 'Evening') %}
+            {% set start_time_str = states('input_datetime.evening_mode_start') %}
+            {% set target_time = today_at('20:00:00') %}
+            {% if start_time_str not in ['', 'unknown', 'unavailable'] %}
+              {% set start_timestamp = start_time_str | as_timestamp %}
+              {% set target_timestamp = target_time.timestamp() %}
+              {% set now_timestamp = now().timestamp() %}
+              {% set elapsed = now_timestamp - start_timestamp %}
+              {% set total = target_timestamp - start_timestamp %}
+              {% set progress = (elapsed / total * 100) | round(1) if total > 60 else 0 %}
+              {{ progress }}% Complete
+            {% else %}Starting Up
+            {% endif %}
+          {% else %}Not Active
+          {% endif %}
+        attributes:
+          current_temp: "{{ states('sensor.evening_temperature_ramp')|int(3000) }}K"
+          next_update: >-
+            {% if is_state('input_select.home_state', 'Evening') %}
+              {{ (now() + timedelta(seconds=60 - now().second)).strftime('%I:%M:%S %p') }}
+            {% else %}N/A
+            {% endif %}
+            
+      # System State Summary
+      - name: "System State Debug"
+        unique_id: system_state_debug_summary  
+        state: >-
+          {% set home_mode = states('input_select.home_state') %}
+          {% set calc_mode = states('sensor.calculated_home_mode') %}
+          {% if home_mode == calc_mode %}✅ Synced ({{ home_mode }})
+          {% else %}⚠️ Drift ({{ home_mode }} vs {{ calc_mode }})
+          {% endif %}
+        attributes:
+          current_mode: "{{ states('input_select.home_state') }}"
+          calculated_mode: "{{ states('sensor.calculated_home_mode') }}"
+          working_today: "{{ states('binary_sensor.working_today') }}"
+          ramp_active: "{{ states('input_boolean.sleep_in_ramp_active') }}"
+          evening_ramp_enabled: "{{ states('input_boolean.living_room_evening_ramp_enabled') }}"
+          
+      # Light State Debug
+      - name: "Light State Debug"
+        unique_id: light_state_debug_info
+        state: >-
+          {% set lamp1 = states('light.lamp_1') %}
+          {% set lamp2 = states('light.lamp_2') %}
+          {% set kitchen = states('light.kitchen_motion_lights') %}
+          {% set living = states('light.living_room_lamps') %}
+          
+          Lamp1: {{ lamp1|upper }} | Lamp2: {{ lamp2|upper }} | Kitchen: {{ kitchen|upper }} | Living: {{ living|upper }}
+        attributes:
+          lamp1_brightness: "{{ state_attr('light.lamp_1', 'brightness')|int(0) }}"
+          lamp1_temp: "{{ state_attr('light.lamp_1', 'color_temp_kelvin')|int(0) }}K"
+          lamp2_brightness: "{{ state_attr('light.lamp_2', 'brightness')|int(0) }}"
+          lamp2_temp: "{{ state_attr('light.lamp_2', 'color_temp_kelvin')|int(0) }}K"
+          target_brightness: "{{ states('sensor.living_room_target_brightness')|int(0) }}%"
+          calculation_source: "{{ state_attr('sensor.living_room_target_brightness', 'calculation_source') }}"
+          last_kitchen_motion: "{{ states('input_datetime.first_kitchen_motion_today') }}"
+
+# Dashboard Card for Developer Debug
+# Add this to your dashboard to see real-time trigger information

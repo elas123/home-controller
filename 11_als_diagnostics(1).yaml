@@ -1,0 +1,57 @@
+################################################################################
+# 🔬 ALS DIAGNOSTICS PACKAGE v1.0
+# Author: Frank S Elaschat
+# Updated: 2025-08-30
+# Status: ✅ Contains required error-handling scripts for the ALS.
+################################################################################
+
+script:
+  update_room_error_feed:
+    alias: "ALS - Update Room Error Feed"
+    description: "Adds a new error to a room's error feed, keeping only the last 5."
+    mode: single
+    fields:
+      room:
+        description: "The room name (e.g., kitchen, livingroom)."
+        example: "livingroom"
+      error:
+        description: "The error message to log."
+        example: "Light entity unavailable"
+    sequence:
+      - variables:
+          feed_entity: "{{ 'input_text.als_error_feed_' ~ room }}"
+      - action: input_text.set_value
+        target:
+          entity_id: "{{ feed_entity }}"
+        data:
+          value: >
+            {% set current_feed = states(feed_entity) | from_json if states(feed_entity) else [] %}
+            {% set new_feed = [error] + current_feed %}
+            {% if new_feed | length > 5 %}
+              {% set new_feed = new_feed[:5] %}
+            {% endif %}
+            {{ new_feed | to_json }}
+
+  clear_room_error:
+    alias: "ALS - Clear Room Error"
+    description: "Clears the error state and error feed for a specific room."
+    mode: single
+    fields:
+      room:
+        description: "The room name to clear errors for (e.g., kitchen, livingroom)."
+        example: "hallway"
+    sequence:
+      - action: input_text.set_value
+        target:
+          entity_id: "{{ 'input_text.als_error_' ~ room }}"
+        data:
+          value: ""
+      - action: input_text.set_value
+        target:
+          entity_id: "{{ 'input_text.als_error_feed_' ~ room }}"
+        data:
+          value: "[]"
+      - action: logbook.log
+        data:
+          name: "ALS Diagnostics"
+          message: "Errors cleared for {{ room | title }}."

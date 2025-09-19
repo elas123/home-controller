@@ -1,0 +1,318 @@
+################################################################################ 
+# WORK SCHEDULE PACKAGE v1.3 - FIXED VERSION WITH WLED CONTROLS
+# Author: Frank S Elaschat
+# Updated: 2025-08-30
+# Status: FIXED - Added WLED turn-off at end of non-work day ramp, no transitions
+################################################################################
+
+input_boolean:
+  sleep_in_ramp_system_enable:
+    name: "Morning Ramp System"
+    icon: mdi:weather-sunrise
+    initial: true
+  sleep_in_ramp_active:
+    name: "Sleep-In Ramp Active"
+    icon: mdi:progress-clock
+    initial: false
+  daily_motion_lock:
+    name: "Daily Motion Lock"
+    icon: mdi:lock
+    initial: false
+
+input_select:
+  morning_day_type_override:
+    name: "Morning Day-Type Override"
+    icon: mdi:calendar-question
+    options:
+      - "auto"
+      - "work"
+      - "off"
+    initial: "auto"
+
+input_number:
+  workday_ramp_base_duration:
+    name: "Workday Ramp Base Duration"
+    min: 15
+    max: 75
+    step: 5
+    initial: 50
+    unit_of_measurement: "min"
+    icon: mdi:timer-sand
+  offday_ramp_base_duration:
+    name: "Off-Day Ramp Base Duration"
+    min: 30
+    max: 120
+    step: 5
+    initial: 75
+    unit_of_measurement: "min"
+    icon: mdi:timer-sand-complete
+  ramp_start_brightness:
+    name: "Ramp Start Brightness"
+    min: 5
+    max: 20
+    step: 1
+    initial: 10
+    unit_of_measurement: "%"
+    icon: mdi:brightness-5
+  ramp_end_brightness:
+    name: "Ramp End Brightness"
+    min: 80
+    max: 100
+    step: 5
+    initial: 100
+    unit_of_measurement: "%"
+    icon: mdi:brightness-7
+  calculated_ramp_duration:
+    name: "Calculated Ramp Duration"
+    min: 15
+    max: 120
+    step: 1
+    initial: 45
+    unit_of_measurement: "min"
+    icon: mdi:timer-sand
+
+input_datetime:
+  ramp_start_time:
+    name: "Ramp Start Time"
+    has_date: true
+    has_time: true
+  ramp_calculated_end_time:
+    name: "Ramp Calculated End Time"
+    has_date: true
+    has_time: true
+  first_kitchen_motion_today:
+    name: "First Kitchen Motion Today"
+    has_date: true
+    has_time: true
+
+template:
+  - sensor:
+      - name: "Sleep In Ramp Duration"
+        unit_of_measurement: "min"
+        availability: >-
+          {{ states('input_boolean.sleep_in_ramp_active') not in ['unknown', 'unavailable'] }}
+        state: >-
+          {% if is_state('input_boolean.sleep_in_ramp_active', 'on') %}
+            {{ states('input_number.calculated_ramp_duration') | int(45) }}
+          {% else %}
+            {% set work_day_detected = is_state('input_boolean.daily_motion_lock', 'on') and states('input_datetime.first_kitchen_motion_today') not in ['unknown', 'unavailable', ''] %}
+            {% if work_day_detected %}
+              {% set motion_time = as_datetime(states('input_datetime.first_kitchen_motion_today')) %}
+              {% set motion_hour = motion_time.hour %}
+              {% set motion_minute = motion_time.minute %}
+              {% set is_work_window = (motion_hour == 4 and motion_minute >= 50) or (motion_hour == 5 and motion_minute == 0) %}
+              {% if is_work_window %}
+                {{ states('input_number.workday_ramp_base_duration') | int(50) }}
+              {% else %}
+                {{ states('input_number.offday_ramp_base_duration') | int(75) }}
+              {% endif %}
+            {% else %}
+              {% if is_state('binary_sensor.working_today', 'on') %}
+                {{ states('input_number.workday_ramp_base_duration') | int(50) }}
+              {% else %}
+                {{ states('input_number.offday_ramp_base_duration') | int(75) }}
+              {% endif %}
+            {% endif %}
+          {% endif %}
+        icon: mdi:timer
+      
+      # Removed duplicate Sleep In Ramp Progress; single source is PyScript
+      
+      # Removed duplicate ramp brightness/temperature sensors.
+      # Canonical versions are defined in ALS helpers.
+      
+      - name: "Sleep In Ramp Status"
+        state: >-
+          {% set enabled = is_state('input_boolean.sleep_in_ramp_system_enable', 'on') %}
+          {% set active = is_state('input_boolean.sleep_in_ramp_active', 'on') %}
+          {% set progress = states('sensor.sleep_in_ramp_progress') | float(0) %}
+          
+          {% if not enabled %} System Disabled
+          {% elif not active %} Waiting for Motion
+          {% elif progress < 100 %} Ramping ({{ progress | round(0) }}%)
+          {% else %} Ramp Complete
+          {% endif %}
+        icon: >-
+          {% if is_state('input_boolean.sleep_in_ramp_active', 'on') %} mdi:weather-sunrise
+          {% elif is_state('input_boolean.sleep_in_ramp_system_enable', 'on') %} mdi:sleep
+          {% else %} mdi:sleep-off
+          {% endif %}
+
+automation:
+  - id: sleep_in_ramp_start
+    alias: "Sleep-In Ramp - Start"
+    description: "Starts the sleep-in ramp with calculate-once smart duration"
+    mode: single
+    triggers:
+      - trigger: state
+        entity_id: input_boolean.sleep_in_ramp_active
+        to: "on"
+    conditions:
+      - condition: state
+        entity_id: input_boolean.sleep_in_ramp_system_enable
+        state: "on"
+      - condition: state
+        entity_id: input_select.home_state
+        state: "Night"
+    actions:
+      - variables:
+          # Get current sun data
+          current_sun: "{{ state_attr('sun.sun', 'elevation') | float(0) }}"
+          sun_rate: "{{ states('sensor.sun_elevation_rate') | float(0.03) }}"
+          target_el: "{{ states('input_number.current_day_threshold') | float(10) }}"
+          
+          # Calculate minutes to threshold using both methods
+          rate_based_minutes: "{{ ((target_el - current_sun) / sun_rate) | round(0) if sun_rate > 0.005 and sun_rate < 0.2 else 999 }}"
+          elevation_based_minutes: "{{ states('sensor.minutes_to_day_mode_elevation') | int(999) }}"
+          
+          # Determine work day vs off day based on motion timing
+          motion_time: "{{ now() }}"
+          motion_hour: "{{ motion_time.hour }}"
+          motion_minute: "{{ motion_time.minute }}"
+          is_work_window: "{{ (motion_hour == 4 and motion_minute >= 50) or (motion_hour == 5 and motion_minute == 0) }}"
+          
+          # Get base durations
+          work_base: "{{ states('input_number.workday_ramp_base_duration') | int(50) }}"
+          off_base: "{{ states('input_number.offday_ramp_base_duration') | int(75) }}"
+          base_duration: "{{ work_base if is_work_window else off_base }}"
+          
+          # Choose best calculation method
+          calculated_duration: >-
+            {% if 10 <= rate_based_minutes <= 180 %}
+              {{ rate_based_minutes }}
+            {% elif 10 <= elevation_based_minutes <= 240 %}
+              {{ elevation_based_minutes }}
+            {% else %}
+              {% set season = states('sensor.current_season') %}
+              {{ 60 if season == 'Winter' else 45 if season in ['Spring', 'Fall'] else 30 }}
+            {% endif %}
+          
+          # Apply sync logic
+          final_duration: >-
+            {% if calculated_duration < 30 %}
+              {{ [calculated_duration * 0.8, 15] | max }}
+            {% elif calculated_duration < 60 %}
+              {{ [calculated_duration * 0.9, 25] | max }}
+            {% else %}
+              {% set season = states('sensor.current_season') %}
+              {% set multiplier = 1.3 if season == 'Winter' else 0.8 if season == 'Summer' else 1.0 %}
+              {{ [base_duration * multiplier, 120] | min }}
+            {% endif %}
+      
+      # Store all calculated values
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.ramp_start_time
+        data:
+          datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+      
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.calculated_ramp_duration
+        data:
+          value: "{{ final_duration | round(0) }}"
+          
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.ramp_calculated_end_time
+        data:
+          datetime: "{{ (now() + timedelta(minutes=final_duration|int)).strftime('%Y-%m-%d %H:%M:%S') }}"
+      
+      # Set first motion tracking
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.first_kitchen_motion_today
+        data:
+          datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+      
+      - action: input_boolean.turn_on
+        target:
+          entity_id: input_boolean.daily_motion_lock
+      
+      - action: input_select.select_option
+        target:
+          entity_id: input_select.home_state
+        data:
+          option: "Early Morning"
+
+  - id: sleep_in_ramp_complete
+    alias: "Sleep-In Ramp - Complete"
+    description: "Completes the ramp when 100% progress is reached OR Day mode begins"
+    mode: single
+    triggers:
+      - trigger: template
+        value_template: >
+          {{ is_state('input_boolean.sleep_in_ramp_active', 'on') and
+              states('sensor.sleep_in_ramp_progress') | float(0) >= 100 }}
+        for:
+          seconds: 5
+      - trigger: state
+        entity_id: sensor.calculated_home_mode
+        to: "Day"
+    conditions:
+      - condition: state
+        entity_id: input_boolean.sleep_in_ramp_active
+        state: "on"
+    actions:
+      - variables:
+          # Check if this was a non-work day ramp
+          motion_time_str: "{{ states('input_datetime.first_kitchen_motion_today') }}"
+          is_non_work_day: >-
+            {% if motion_time_str not in ['unknown', 'unavailable', ''] %}
+              {% set motion_time = as_datetime(motion_time_str) %}
+              {% set motion_hour = motion_time.hour %}
+              {% set motion_minute = motion_time.minute %}
+              {% set is_work_window = (motion_hour == 4 and motion_minute >= 50) or (motion_hour == 5 and motion_minute == 0) %}
+              {{ not is_work_window }}
+            {% else %}
+              {{ not is_state('binary_sensor.working_today', 'on') }}
+            {% endif %}
+      
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.sleep_in_ramp_active
+      
+      - action: input_select.select_option
+        target:
+          entity_id: input_select.home_state
+        data:
+          option: "Day"
+      
+      # WLED Control: Turn off at end of NON-WORK day ramp (NO transitions)
+      - if:
+          - condition: template
+            value_template: "{{ is_non_work_day }}"
+          - condition: state
+            entity_id: input_boolean.kitchen_wled_enable
+            state: "on"
+        then:
+          - action: light.turn_off
+            target:
+              entity_id: 
+                - light.sink_wled
+                - light.frig_strip
+          - action: logbook.log
+            data:
+              name: "WLED Control"
+              message: "Kitchen WLED turned off at end of non-work day ramp"
+      
+      - action: logbook.log
+        data:
+          name: "Sleep-In Ramp"
+          message: "Ramp complete - Triggered by: {{ trigger.platform }} | Non-work day: {{ is_non_work_day }}"
+
+  - id: daily_motion_reset
+    alias: "Daily Motion Reset"
+    description: "Resets daily motion lock and tracking at midnight"
+    triggers:
+      - trigger: time
+        at: "00:00:00"
+    actions:
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.daily_motion_lock
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.first_kitchen_motion_today
+        data:
+          datetime: ""

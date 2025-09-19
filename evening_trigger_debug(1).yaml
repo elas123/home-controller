@@ -1,0 +1,109 @@
+# 🌅 Evening Mode Trigger Debug - Shows EXACTLY why evening mode activated
+# Add this template to see all the logic and values that triggered evening mode
+
+template:
+  - sensor:
+      - name: "Evening Trigger Analysis"
+        unique_id: evening_trigger_analysis_debug
+        state: >-
+          {% set h = now().hour %}
+          {% set m = now().minute %}
+          {% set sun = states('sensor.sun_elevation_frequent')|float(0) %}
+          {% set day_th = states('input_number.current_day_threshold')|float(10) %}
+          {% set workday = is_state('binary_sensor.working_today','on') %}
+          {% set cutoff = states('input_datetime.evening_time_cutoff') %}
+          {% set learned = states('input_number.manual_evening_elevation_setting')|float(4) %}
+          {% set e_override = is_state('input_boolean.evening_mode_override','on') %}
+          
+          {% if e_override %}
+            🔧 OVERRIDE ACTIVE - Manual evening mode enabled
+          {% elif now() > today_at(cutoff) %}
+            🕰️ TIME FAILSAFE - Past {{ cutoff }} cutoff time
+          {% elif sun < learned and h >= 15 %}
+            🌅 SUN TRIGGER - Sun {{ sun }}° below {{ learned }}° threshold after 3PM
+          {% elif h < 15 %}
+            ⏰ TOO EARLY - Current time {{ h }}:{{ '%02d'|format(m) }} is before 3:00 PM
+          {% else %}
+            ☀️ SUN TOO HIGH - Sun {{ sun }}° still above {{ learned }}° threshold
+          {% endif %}
+        attributes:
+          # Current Values
+          current_hour: "{{ now().hour }}"
+          current_minute: "{{ now().minute }}"
+          current_sun_elevation: "{{ states('sensor.sun_elevation_frequent')|float(0) }}"
+          
+          # Thresholds
+          evening_sun_threshold: "{{ states('input_number.manual_evening_elevation_setting')|float(4) }}"
+          day_sun_threshold: "{{ states('input_number.current_day_threshold')|float(10) }}"
+          evening_cutoff_time: "{{ states('input_datetime.evening_time_cutoff') }}"
+          
+          # Logic Checks
+          is_override_active: "{{ is_state('input_boolean.evening_mode_override','on') }}"
+          is_past_cutoff: "{{ now() > today_at(states('input_datetime.evening_time_cutoff')) }}"
+          is_after_3pm: "{{ now().hour >= 15 }}"
+          is_sun_below_threshold: "{{ states('sensor.sun_elevation_frequent')|float(0) < states('input_number.manual_evening_elevation_setting')|float(4) }}"
+          
+          # Key Times
+          evening_started_at: "{{ states('input_datetime.evening_mode_start') }}"
+          current_home_state: "{{ states('input_select.home_state') }}"
+          calculated_home_state: "{{ states('sensor.calculated_home_mode') }}"
+          
+          # Work Day Info
+          is_work_day: "{{ is_state('binary_sensor.working_today','on') }}"
+          
+          # Complete Logic Breakdown
+          trigger_reason: >-
+            {% set h = now().hour %}
+            {% set sun = states('sensor.sun_elevation_frequent')|float(0) %}
+            {% set learned = states('input_number.manual_evening_elevation_setting')|float(4) %}
+            {% set cutoff = states('input_datetime.evening_time_cutoff') %}
+            {% set e_override = is_state('input_boolean.evening_mode_override','on') %}
+            
+            EVENING MODE LOGIC ANALYSIS:
+            
+            1. Override Check: {{ 'YES - Manual override active' if e_override else 'NO - No manual override' }}
+            
+            2. Time Failsafe: {{ 'YES - Past ' + cutoff + ' cutoff' if now() > today_at(cutoff) else 'NO - Before ' + cutoff + ' cutoff' }}
+            
+            3. Primary Trigger (Sun + Time):
+               - Current time: {{ h }}:{{ '%02d'|format(now().minute) }}
+               - After 3 PM? {{ 'YES' if h >= 15 else 'NO' }}
+               - Sun elevation: {{ sun }}°
+               - Evening threshold: {{ learned }}°
+               - Sun below threshold? {{ 'YES' if sun < learned else 'NO' }}
+               - BOTH conditions met? {{ 'YES - EVENING TRIGGERED' if (sun < learned and h >= 15) else 'NO - Evening not triggered' }}
+            
+            RESULT: {{ 'Evening mode should be ACTIVE' if (e_override or now() > today_at(cutoff) or (sun < learned and h >= 15)) else 'Evening mode should be INACTIVE' }}
+
+      # Real-time Evening Mode Monitor
+      - name: "Evening Mode Real Time"
+        unique_id: evening_mode_real_time_monitor
+        state: >-
+          {% if states('input_datetime.evening_mode_start') not in ['', 'unknown', 'unavailable'] %}
+            Started at {{ states('input_datetime.evening_mode_start') | as_timestamp | timestamp_custom('%I:%M:%S %p') }}
+          {% else %}
+            Not started today
+          {% endif %}
+        attributes:
+          minutes_since_evening_start: >-
+            {% if states('input_datetime.evening_mode_start') not in ['', 'unknown', 'unavailable'] %}
+              {% set start_timestamp = states('input_datetime.evening_mode_start') | as_timestamp %}
+              {% set now_timestamp = now().timestamp() %}
+              {{ ((now_timestamp - start_timestamp) / 60) | round(1) }} minutes ago
+            {% else %}
+              N/A
+            {% endif %}
+          sun_at_evening_start: >-
+            {% if states('input_datetime.evening_mode_start') not in ['', 'unknown', 'unavailable'] %}
+              Check history at {{ states('input_datetime.evening_mode_start') | as_timestamp | timestamp_custom('%I:%M %p') }}
+            {% else %}
+              N/A
+            {% endif %}
+          evening_ramp_target: "8:00 PM ({{ today_at('20:00:00').strftime('%I:%M %p') }})"
+          time_remaining_to_target: >-
+            {% set target = today_at('20:00:00') %}
+            {% if now() < target %}
+              {{ ((target - now()).total_seconds() / 60) | round(0) }} minutes
+            {% else %}
+              Target time passed
+            {% endif %}

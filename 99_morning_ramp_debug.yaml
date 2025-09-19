@@ -1,0 +1,76 @@
+################################################################################
+# MORNING RAMP DEEP DEBUG (package-safe name)
+# Creates sensors to show exactly why the ramp is or isn't starting.
+################################################################################
+
+template:
+  - sensor:
+      - name: "Morning Ramp Gate Status"
+        unique_id: morning_ramp_gate_status
+        state: >-
+          {% set hs = states('input_select.home_state') %}
+          {% set now_t = now().strftime('%H:%M:%S') %}
+          {% set in_window = '04:45:00' <= now_t <= '08:00:00' %}
+          {% set ran_today = is_state('input_boolean.daily_motion_lock','on') %}
+          {% set enabled = states('input_boolean.sleep_in_ramp_system_enable') %}
+          {% set enabled_ok = enabled in ['on','unknown','unavailable',''] %}
+          {% set active = is_state('input_boolean.sleep_in_ramp_active','on') %}
+          {% if active %}
+            Active – ramp running
+          {% elif not enabled_ok %}
+            Blocked – ramp system disabled
+          {% elif hs != 'Night' %}
+            Blocked – needs Night (current: {{ hs }})
+          {% elif not in_window %}
+            Blocked – outside 04:45–08:00 (now {{ now().strftime('%-I:%M %p') }})
+          {% elif ran_today %}
+            Blocked – already ran today (daily_motion_lock)
+          {% else %}
+            OK – motion will start ramp
+          {% endif %}
+        attributes:
+          home_state: "{{ states('input_select.home_state') }}"
+          in_morning_window: "{{ '04:45:00' <= now().strftime('%H:%M:%S') <= '08:00:00' }}"
+          ran_today_lock: "{{ states('input_boolean.daily_motion_lock') }}"
+          ramp_enabled_helper: "{{ states('input_boolean.sleep_in_ramp_system_enable') if states('input_boolean.sleep_in_ramp_system_enable') is not none else 'missing' }}"
+          ramp_active: "{{ states('input_boolean.sleep_in_ramp_active') }}"
+          first_kitchen_motion_today: "{{ states('input_datetime.first_kitchen_motion_today') }}"
+          ramp_start_time: "{{ states('input_datetime.ramp_start_time') }}"
+          ramp_end_time: "{{ states('input_datetime.ramp_calculated_end_time') }}"
+          progress_pct: "{{ states('sensor.sleep_in_ramp_progress') }}"
+          classification: "{{ states('sensor.trial_morning_classification') }}"
+          day_type_override: "{{ states('input_select.morning_day_type_override') if states('input_select.morning_day_type_override') is not none else 'n/a' }}"
+          pys_controller_toggle: "{{ states('input_boolean.use_pyscript_home_state') if states('input_boolean.use_pyscript_home_state') is not none else 'n/a' }}"
+          proposed_mode: "{{ states('sensor.pys_home_mode_proposed') if states('sensor.pys_home_mode_proposed') is not none else 'n/a' }}"
+          proposed_reason: "{{ states('sensor.pys_home_mode_reason') if states('sensor.pys_home_mode_reason') is not none else 'n/a' }}"
+          evening_status: "{{ states('sensor.pys_evening_status') if states('sensor.pys_evening_status') is not none else 'n/a' }}"
+          last_action: "{{ states('sensor.pys_last_action') if states('sensor.pys_last_action') is not none else 'n/a' }}"
+          kitchen_motion_p1: "{{ states('binary_sensor.aqara_motion_sensor_p1_occupancy') if states('binary_sensor.aqara_motion_sensor_p1_occupancy') is not none else 'n/a' }}"
+          kitchen_motion_iris: "{{ states('binary_sensor.kitchen_iris_frig_occupancy') if states('binary_sensor.kitchen_iris_frig_occupancy') is not none else 'n/a' }}"
+          now: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+
+      - name: "Morning Ramp Motion Recency"
+        unique_id: morning_ramp_motion_recency
+        state: >-
+          {% set p1 = states['binary_sensor.aqara_motion_sensor_p1_occupancy'] if states['binary_sensor.aqara_motion_sensor_p1_occupancy'] is defined else None %}
+          {% set iris = states['binary_sensor.kitchen_iris_frig_occupancy'] if states['binary_sensor.kitchen_iris_frig_occupancy'] is defined else None %}
+          {% set t_p1 = as_timestamp(p1.last_changed) if p1 else 0 %}
+          {% set t_iris = as_timestamp(iris.last_changed) if iris else 0 %}
+          {% set last = [t_p1, t_iris] | max %}
+          {% if last > 0 %}
+            {{ ((now().timestamp() - last) / 60) | round(1) }} min ago
+          {% else %}n/a{% endif %}
+        attributes:
+          p1_last_changed: "{{ states['binary_sensor.aqara_motion_sensor_p1_occupancy'].last_changed if states['binary_sensor.aqara_motion_sensor_p1_occupancy'] is defined else 'n/a' }}"
+          iris_last_changed: "{{ states['binary_sensor.kitchen_iris_frig_occupancy'].last_changed if states['binary_sensor.kitchen_iris_frig_occupancy'] is defined else 'n/a' }}"
+
+      - name: "Morning Ramp Expectation"
+        unique_id: morning_ramp_expectation
+        state: >-
+          {% set hs = states('input_select.home_state') %}
+          {% set active = is_state('input_boolean.sleep_in_ramp_active','on') %}
+          {% if active %}Home should be Early Morning
+          {% elif hs == 'Night' %}Motion should start ramp
+          {% else %}Waiting for Night + motion
+          {% endif %}
+

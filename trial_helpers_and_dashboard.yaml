@@ -1,0 +1,47 @@
+################################################################################
+# TRIAL HELPERS + OPTIONAL GATING (Safe to delete later)
+# - Adds a single toggle: input_boolean.use_pyscript_home_state
+# - Optionally disables your YAML Home State automation when the toggle is ON
+#   (entity id assumed: automation.home_state_evaluation)
+################################################################################
+
+input_boolean:
+  use_pyscript_home_state:
+    name: "Use PyScript Home Controller"
+    icon: mdi:toggle-switch
+    initial: false
+
+automation:
+  # Optional: Gate the YAML Home State automation while testing PyScript (2025.8 schema)
+  - id: trial_gate_yaml_home_state_eval
+    alias: "TRIAL – Gate YAML Home State Evaluation"
+    mode: restart
+    triggers:
+      - trigger: state
+        entity_id: input_boolean.use_pyscript_home_state
+    actions:
+      - choose:
+          - conditions:
+              - condition: state
+                entity_id: input_boolean.use_pyscript_home_state
+                state: "on"
+            sequence:
+              - action: automation.turn_off
+                target:
+                  entity_id: automation.home_state_evaluation
+              - action: logbook.log
+                data:
+                  name: "TRIAL"
+                  message: "Disabled YAML Home State Evaluation (toggle ON)"
+          - conditions:
+              - condition: state
+                entity_id: input_boolean.use_pyscript_home_state
+                state: "off"
+            sequence:
+              - action: automation.turn_on
+                target:
+                  entity_id: automation.home_state_evaluation
+              - action: logbook.log
+                data:
+                  name: "TRIAL"
+                  message: "Enabled YAML Home State Evaluation (toggle OFF)"

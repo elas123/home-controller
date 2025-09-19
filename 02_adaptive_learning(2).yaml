@@ -1,0 +1,731 @@
+################################################################################
+# 🧠 ADAPTIVE LEARNING SYSTEM v2.2 - COMPLETELY FIXED
+# Author: Frank S Elaschat
+# Updated: 2025-08-30  
+# Status: ✅ All template errors resolved
+################################################################################
+
+input_boolean:
+  adaptive_learning_enabled:
+    name: "Enable Adaptive Learning System"
+    initial: true
+    icon: mdi:brain
+  use_average_bedroom:
+    name: "Bedroom: Use Average (not Median)" 
+    initial: false
+    icon: mdi:calculator
+  use_average_kitchen:
+    name: "Kitchen: Use Average (not Median)"
+    initial: false
+    icon: mdi:calculator
+  use_average_bathroom:
+    name: "Bathroom: Use Average (not Median)"
+    initial: false
+    icon: mdi:calculator
+  use_average_hallway:
+    name: "Hallway: Use Average (not Median)"
+    initial: false
+    icon: mdi:calculator
+  use_average_laundry:
+    name: "Laundry: Use Average (not Median)"
+    initial: false
+    icon: mdi:calculator
+  use_average_livingroom:
+    name: "Living Room: Use Average (not Median)"
+    initial: false
+    icon: mdi:calculator
+
+input_number:
+  confirmation_threshold:
+    name: "Confirmation Threshold"
+    min: 1
+    max: 10
+    step: 1
+    initial: 4
+    icon: mdi:check-all
+
+template:
+  - sensor:
+      - name: "Learned Brightness Bedroom"
+        unique_id: learned_brightness_bedroom_v1
+        unit_of_measurement: "%"
+        state: >-
+          {% set memory_raw = states('input_text.adaptive_memory_bedroom') %}
+          {% set memory = memory_raw | from_json if memory_raw not in ['unknown', 'unavailable', ''] else {} %}
+          {% set home_mode = states('input_select.home_state') %}
+          {% set sun_el = state_attr('sun.sun', 'elevation') | float(0) %}
+          {% set cloud_coverage = state_attr('weather.pirateweather', 'cloud_coverage') | int(0) %}
+          {% set season = states('sensor.current_season') %}
+          
+          {% if sun_el < 0 %} {% set sun_bucket = 'Below_Horizon' %}
+          {% elif sun_el < 15 %} {% set sun_bucket = 'Low_Sun' %}
+          {% elif sun_el < 40 %} {% set sun_bucket = 'Mid_Sun' %}
+          {% else %} {% set sun_bucket = 'High_Sun' %}
+          {% endif %}
+          
+          {% set condition_key = home_mode ~ '_' ~ sun_bucket ~ '_' ~ (cloud_coverage//20 * 20) ~ '_' ~ season %}
+          
+          {% if condition_key in memory and (memory[condition_key] | length) >= states('input_number.confirmation_threshold') | int %}
+            {% set values = memory[condition_key] %}
+            {% if is_state('input_boolean.use_average_bedroom', 'on') %}
+              {{ (values | sum / (values | length)) | round(0) }}
+            {% else %}
+              {% set sorted_vals = values | sort %}
+              {% set mid = (sorted_vals | length) // 2 %}
+              {% if (sorted_vals | length) % 2 == 0 %}
+                {{ ((sorted_vals[mid-1] + sorted_vals[mid]) / 2) | round(0) }}
+              {% else %}
+                {{ sorted_vals[mid] | round(0) }}
+              {% endif %}
+            {% endif %}
+          {% else %}
+            {{ states('sensor.intelligent_brightness_bedroom') | int(50) }}
+          {% endif %}
+        attributes:
+          confirmations: >
+            {% set memory_raw = states('input_text.adaptive_memory_bedroom') %}
+            {% set memory = memory_raw | from_json if memory_raw not in ['unknown', 'unavailable', ''] else {} %}
+            {% set home_mode = states('input_select.home_state') %}
+            {% set sun_el = state_attr('sun.sun', 'elevation') | float(0) %}
+            {% set cloud_coverage = state_attr('weather.pirateweather', 'cloud_coverage') | int(0) %}
+            {% set season = states('sensor.current_season') %}
+            {% if sun_el < 0 %} {% set sun_bucket = 'Below_Horizon' %}
+            {% elif sun_el < 15 %} {% set sun_bucket = 'Low_Sun' %}
+            {% elif sun_el < 40 %} {% set sun_bucket = 'Mid_Sun' %}
+            {% else %} {% set sun_bucket = 'High_Sun' %}
+            {% endif %}
+            {% set condition_key = home_mode ~ '_' ~ sun_bucket ~ '_' ~ (cloud_coverage//20 * 20) ~ '_' ~ season %}
+            {{ memory[condition_key] | length if condition_key in memory else 0 }}
+          using_learned: >
+            {% set memory_raw = states('input_text.adaptive_memory_bedroom') %}
+            {% set memory = memory_raw | from_json if memory_raw not in ['unknown', 'unavailable', ''] else {} %}
+            {% set home_mode = states('input_select.home_state') %}
+            {% set cloud_coverage = state_attr('weather.pirateweather', 'cloud_coverage') | int(0) %}
+            {% set season = states('sensor.current_season') %}
+            {% set sun_el = state_attr('sun.sun', 'elevation') | float(0) %}
+            {% if sun_el < 0 %} {% set sun_bucket = 'Below_Horizon' %}
+            {% elif sun_el < 15 %} {% set sun_bucket = 'Low_Sun' %}
+            {% elif sun_el < 40 %} {% set sun_bucket = 'Mid_Sun' %}
+            {% else %} {% set sun_bucket = 'High_Sun' %}
+            {% endif %}
+            {% set condition_key = home_mode ~ '_' ~ sun_bucket ~ '_' ~ (cloud_coverage//20 * 20) ~ '_' ~ season %}
+            {{ condition_key in memory and (memory[condition_key] | length) >= states('input_number.confirmation_threshold') | int(4) }}
+        icon: >-
+          {% set using_learned = state_attr('sensor.learned_brightness_bedroom', 'using_learned') | default(false) %}
+          {{ 'mdi:brain' if using_learned else 'mdi:brain-off-outline' }}
+
+      - name: "Learned Brightness Kitchen"
+        unique_id: learned_brightness_kitchen_v1
+        unit_of_measurement: "%"
+        state: >-
+          {% set memory_raw = states('input_text.adaptive_memory_kitchen') %}
+          {% set memory = memory_raw | from_json if memory_raw not in ['unknown', 'unavailable', ''] else {} %}
+          {% set home_mode = states('input_select.home_state') %}
+          {% set sun_el = state_attr('sun.sun', 'elevation') | float(0) %}
+          {% set cloud_coverage = state_attr('weather.pirateweather', 'cloud_coverage') | int(0) %}
+          {% set season = states('sensor.current_season') %}
+          
+          {% if sun_el < 0 %} {% set sun_bucket = 'Below_Horizon' %}
+          {% elif sun_el < 15 %} {% set sun_bucket = 'Low_Sun' %}
+          {% elif sun_el < 40 %} {% set sun_bucket = 'Mid_Sun' %}
+          {% else %} {% set sun_bucket = 'High_Sun' %}
+          {% endif %}
+          
+          {% set condition_key = home_mode ~ '_' ~ sun_bucket ~ '_' ~ (cloud_coverage//20 * 20) ~ '_' ~ season %}
+          
+          {% if condition_key in memory and (memory[condition_key] | length) >= states('input_number.confirmation_threshold') | int %}
+            {% set values = memory[condition_key] %}
+            {% if is_state('input_boolean.use_average_kitchen', 'on') %}
+              {{ (values | sum / (values | length)) | round(0) }}
+            {% else %}
+              {% set sorted_vals = values | sort %}
+              {% set mid = (sorted_vals | length) // 2 %}
+              {% if (sorted_vals | length) % 2 == 0 %}
+                {{ ((sorted_vals[mid-1] + sorted_vals[mid]) / 2) | round(0) }}
+              {% else %}
+                {{ sorted_vals[mid] | round(0) }}
+              {% endif %}
+            {% endif %}
+          {% else %}
+            {{ states('sensor.intelligent_brightness_kitchen') | int(50) }}
+          {% endif %}
+        attributes:
+          confirmations: >
+            {% set memory_raw = states('input_text.adaptive_memory_kitchen') %}
+            {% set memory = memory_raw | from_json if memory_raw not in ['unknown', 'unavailable', ''] else {} %}
+            {% set home_mode = states('input_select.home_state') %}
+            {% set sun_el = state_attr('sun.sun', 'elevation') | float(0) %}
+            {% set cloud_coverage = state_attr('weather.pirateweather', 'cloud_coverage') | int(0) %}
+            {% set season = states('sensor.current_season') %}
+            {% if sun_el < 0 %} {% set sun_bucket = 'Below_Horizon' %}
+            {% elif sun_el < 15 %} {% set sun_bucket = 'Low_Sun' %}
+            {% elif sun_el < 40 %} {% set sun_bucket = 'Mid_Sun' %}
+            {% else %} {% set sun_bucket = 'High_Sun' %}
+            {% endif %}
+            {% set condition_key = home_mode ~ '_' ~ sun_bucket ~ '_' ~ (cloud_coverage//20 * 20) ~ '_' ~ season %}
+            {{ memory[condition_key] | length if condition_key in memory else 0 }}
+          using_learned: >
+            {% set memory_raw = states('input_text.adaptive_memory_kitchen') %}
+            {% set memory = memory_raw | from_json if memory_raw not in ['unknown', 'unavailable', ''] else {} %}
+            {% set home_mode = states('input_select.home_state') %}
+            {% set cloud_coverage = state_attr('weather.pirateweather', 'cloud_coverage') | int(0) %}
+            {% set season = states('sensor.current_season') %}
+            {% set sun_el = state_attr('sun.sun', 'elevation') | float(0) %}
+            {% if sun_el < 0 %} {% set sun_bucket = 'Below_Horizon' %}
+            {% elif sun_el < 15 %} {% set sun_bucket = 'Low_Sun' %}
+            {% elif sun_el < 40 %} {% set sun_bucket = 'Mid_Sun' %}
+            {% else %} {% set sun_bucket = 'High_Sun' %}
+            {% endif %}
+            {% set condition_key = home_mode ~ '_' ~ sun_bucket ~ '_' ~ (cloud_coverage//20 * 20) ~ '_' ~ season %}
+            {{ condition_key in memory and (memory[condition_key] | length) >= states('input_number.confirmation_threshold') | int(4) }}
+        icon: >-
+          {% set using_learned = state_attr('sensor.learned_brightness_kitchen', 'using_learned') | default(false) %}
+          {{ 'mdi:brain' if using_learned else 'mdi:brain-off-outline' }}
+
+      - name: "Learned Brightness Bathroom"
+        unique_id: learned_brightness_bathroom_v1
+        unit_of_measurement: "%"
+        state: >-
+          {% set memory_raw = states('input_text.adaptive_memory_bathroom') %}
+          {% set memory = memory_raw | from_json if memory_raw not in ['unknown', 'unavailable', ''] else {} %}
+          {% set home_mode = states('input_select.home_state') %}
+          {% set sun_el = state_attr('sun.sun', 'elevation') | float(0) %}
+          {% set cloud_coverage = state_attr('weather.pirateweather', 'cloud_coverage') | int(0) %}
+          {% set season = states('sensor.current_season') %}
+          
+          {% if sun_el < 0 %} {% set sun_bucket = 'Below_Horizon' %}
+          {% elif sun_el < 15 %} {% set sun_bucket = 'Low_Sun' %}
+          {% elif sun_el < 40 %} {% set sun_bucket = 'Mid_Sun' %}
+          {% else %} {% set sun_bucket = 'High_Sun' %}
+          {% endif %}
+          
+          {% set condition_key = home_mode ~ '_' ~ sun_bucket ~ '_' ~ (cloud_coverage//20 * 20) ~ '_' ~ season %}
+          
+          {% if condition_key in memory and (memory[condition_key] | length) >= states('input_number.confirmation_threshold') | int %}
+            {% set values = memory[condition_key] %}
+            {% if is_state('input_boolean.use_average_bathroom', 'on') %}
+              {{ (values | sum / (values | length)) | round(0) }}
+            {% else %}
+              {% set sorted_vals = values | sort %}
+              {% set mid = (sorted_vals | length) // 2 %}
+              {% if (sorted_vals | length) % 2 == 0 %}
+                {{ ((sorted_vals[mid-1] + sorted_vals[mid]) / 2) | round(0) }}
+              {% else %}
+                {{ sorted_vals[mid] | round(0) }}
+              {% endif %}
+            {% endif %}
+          {% else %}
+            {{ states('sensor.intelligent_brightness_bathroom') | int(50) }}
+          {% endif %}
+        attributes:
+          confirmations: >
+            {% set memory_raw = states('input_text.adaptive_memory_bathroom') %}
+            {% set memory = memory_raw | from_json if memory_raw not in ['unknown', 'unavailable', ''] else {} %}
+            {% set home_mode = states('input_select.home_state') %}
+            {% set sun_el = state_attr('sun.sun', 'elevation') | float(0) %}
+            {% set cloud_coverage = state_attr('weather.pirateweather', 'cloud_coverage') | int(0) %}
+            {% set season = states('sensor.current_season') %}
+            {% if sun_el < 0 %} {% set sun_bucket = 'Below_Horizon' %}
+            {% elif sun_el < 15 %} {% set sun_bucket = 'Low_Sun' %}
+            {% elif sun_el < 40 %} {% set sun_bucket = 'Mid_Sun' %}
+            {% else %} {% set sun_bucket = 'High_Sun' %}
+            {% endif %}
+            {% set condition_key = home_mode ~ '_' ~ sun_bucket ~ '_' ~ (cloud_coverage//20 * 20) ~ '_' ~ season %}
+            {{ memory[condition_key] | length if condition_key in memory else 0 }}
+          using_learned: >
+            {% set memory_raw = states('input_text.adaptive_memory_bathroom') %}
+            {% set memory = memory_raw | from_json if memory_raw not in ['unknown', 'unavailable', ''] else {} %}
+            {% set home_mode = states('input_select.home_state') %}
+            {% set cloud_coverage = state_attr('weather.pirateweather', 'cloud_coverage') | int(0) %}
+            {% set season = states('sensor.current_season') %}
+            {% set sun_el = state_attr('sun.sun', 'elevation') | float(0) %}
+            {% if sun_el < 0 %} {% set sun_bucket = 'Below_Horizon' %}
+            {% elif sun_el < 15 %} {% set sun_bucket = 'Low_Sun' %}
+            {% elif sun_el < 40 %} {% set sun_bucket = 'Mid_Sun' %}
+            {% else %} {% set sun_bucket = 'High_Sun' %}
+            {% endif %}
+            {% set condition_key = home_mode ~ '_' ~ sun_bucket ~ '_' ~ (cloud_coverage//20 * 20) ~ '_' ~ season %}
+            {{ condition_key in memory and (memory[condition_key] | length) >= states('input_number.confirmation_threshold') | int(4) }}
+        icon: >-
+          {% set using_learned = state_attr('sensor.learned_brightness_bathroom', 'using_learned') | default(false) %}
+          {{ 'mdi:brain' if using_learned else 'mdi:brain-off-outline' }}
+
+      - name: "Learned Brightness Hallway"
+        unique_id: learned_brightness_hallway_v1
+        unit_of_measurement: "%"
+        state: >-
+          {% set memory_raw = states('input_text.adaptive_memory_hallway') %}
+          {% set memory = memory_raw | from_json if memory_raw not in ['unknown', 'unavailable', ''] else {} %}
+          {% set home_mode = states('input_select.home_state') %}
+          {% set sun_el = state_attr('sun.sun', 'elevation') | float(0) %}
+          {% set cloud_coverage = state_attr('weather.pirateweather', 'cloud_coverage') | int(0) %}
+          {% set season = states('sensor.current_season') %}
+          
+          {% if sun_el < 0 %} {% set sun_bucket = 'Below_Horizon' %}
+          {% elif sun_el < 15 %} {% set sun_bucket = 'Low_Sun' %}
+          {% elif sun_el < 40 %} {% set sun_bucket = 'Mid_Sun' %}
+          {% else %} {% set sun_bucket = 'High_Sun' %}
+          {% endif %}
+          
+          {% set condition_key = home_mode ~ '_' ~ sun_bucket ~ '_' ~ (cloud_coverage//20 * 20) ~ '_' ~ season %}
+          
+          {% if condition_key in memory and (memory[condition_key] | length) >= states('input_number.confirmation_threshold') | int %}
+            {% set values = memory[condition_key] %}
+            {% if is_state('input_boolean.use_average_hallway', 'on') %}
+              {{ (values | sum / (values | length)) | round(0) }}
+            {% else %}
+              {% set sorted_vals = values | sort %}
+              {% set mid = (sorted_vals | length) // 2 %}
+              {% if (sorted_vals | length) % 2 == 0 %}
+                {{ ((sorted_vals[mid-1] + sorted_vals[mid]) / 2) | round(0) }}
+              {% else %}
+                {{ sorted_vals[mid] | round(0) }}
+              {% endif %}
+            {% endif %}
+          {% else %}
+            {{ states('sensor.intelligent_brightness_hallway') | int(50) }}
+          {% endif %}
+        attributes:
+          confirmations: >
+            {% set memory_raw = states('input_text.adaptive_memory_hallway') %}
+            {% set memory = memory_raw | from_json if memory_raw not in ['unknown', 'unavailable', ''] else {} %}
+            {% set home_mode = states('input_select.home_state') %}
+            {% set sun_el = state_attr('sun.sun', 'elevation') | float(0) %}
+            {% set cloud_coverage = state_attr('weather.pirateweather', 'cloud_coverage') | int(0) %}
+            {% set season = states('sensor.current_season') %}
+            {% if sun_el < 0 %} {% set sun_bucket = 'Below_Horizon' %}
+            {% elif sun_el < 15 %} {% set sun_bucket = 'Low_Sun' %}
+            {% elif sun_el < 40 %} {% set sun_bucket = 'Mid_Sun' %}
+            {% else %} {% set sun_bucket = 'High_Sun' %}
+            {% endif %}
+            {% set condition_key = home_mode ~ '_' ~ sun_bucket ~ '_' ~ (cloud_coverage//20 * 20) ~ '_' ~ season %}
+            {{ memory[condition_key] | length if condition_key in memory else 0 }}
+          using_learned: >
+            {% set memory_raw = states('input_text.adaptive_memory_hallway') %}
+            {% set memory = memory_raw | from_json if memory_raw not in ['unknown', 'unavailable', ''] else {} %}
+            {% set home_mode = states('input_select.home_state') %}
+            {% set cloud_coverage = state_attr('weather.pirateweather', 'cloud_coverage') | int(0) %}
+            {% set season = states('sensor.current_season') %}
+            {% set sun_el = state_attr('sun.sun', 'elevation') | float(0) %}
+            {% if sun_el < 0 %} {% set sun_bucket = 'Below_Horizon' %}
+            {% elif sun_el < 15 %} {% set sun_bucket = 'Low_Sun' %}
+            {% elif sun_el < 40 %} {% set sun_bucket = 'Mid_Sun' %}
+            {% else %} {% set sun_bucket = 'High_Sun' %}
+            {% endif %}
+            {% set condition_key = home_mode ~ '_' ~ sun_bucket ~ '_' ~ (cloud_coverage//20 * 20) ~ '_' ~ season %}
+            {{ condition_key in memory and (memory[condition_key] | length) >= states('input_number.confirmation_threshold') | int(4) }}
+        icon: >-
+          {% set using_learned = state_attr('sensor.learned_brightness_hallway', 'using_learned') | default(false) %}
+          {{ 'mdi:brain' if using_learned else 'mdi:brain-off-outline' }}
+
+      - name: "Learned Brightness Laundry"
+        unique_id: learned_brightness_laundry_v1
+        unit_of_measurement: "%"
+        state: >-
+          {% set memory_raw = states('input_text.adaptive_memory_laundry') %}
+          {% set memory = memory_raw | from_json if memory_raw not in ['unknown', 'unavailable', ''] else {} %}
+          {% set home_mode = states('input_select.home_state') %}
+          {% set sun_el = state_attr('sun.sun', 'elevation') | float(0) %}
+          {% set cloud_coverage = state_attr('weather.pirateweather', 'cloud_coverage') | int(0) %}
+          {% set season = states('sensor.current_season') %}
+          
+          {% if sun_el < 0 %} {% set sun_bucket = 'Below_Horizon' %}
+          {% elif sun_el < 15 %} {% set sun_bucket = 'Low_Sun' %}
+          {% elif sun_el < 40 %} {% set sun_bucket = 'Mid_Sun' %}
+          {% else %} {% set sun_bucket = 'High_Sun' %}
+          {% endif %}
+          
+          {% set condition_key = home_mode ~ '_' ~ sun_bucket ~ '_' ~ (cloud_coverage//20 * 20) ~ '_' ~ season %}
+          
+          {% if condition_key in memory and (memory[condition_key] | length) >= states('input_number.confirmation_threshold') | int %}
+            {% set values = memory[condition_key] %}
+            {% if is_state('input_boolean.use_average_laundry', 'on') %}
+              {{ (values | sum / (values | length)) | round(0) }}
+            {% else %}
+              {% set sorted_vals = values | sort %}
+              {% set mid = (sorted_vals | length) // 2 %}
+              {% if (sorted_vals | length) % 2 == 0 %}
+                {{ ((sorted_vals[mid-1] + sorted_vals[mid]) / 2) | round(0) }}
+              {% else %}
+                {{ sorted_vals[mid] | round(0) }}
+              {% endif %}
+            {% endif %}
+          {% else %}
+            {{ states('sensor.intelligent_brightness_laundry') | int(50) }}
+          {% endif %}
+        attributes:
+          confirmations: >
+            {% set memory_raw = states('input_text.adaptive_memory_laundry') %}
+            {% set memory = memory_raw | from_json if memory_raw not in ['unknown', 'unavailable', ''] else {} %}
+            {% set home_mode = states('input_select.home_state') %}
+            {% set sun_el = state_attr('sun.sun', 'elevation') | float(0) %}
+            {% set cloud_coverage = state_attr('weather.pirateweather', 'cloud_coverage') | int(0) %}
+            {% set season = states('sensor.current_season') %}
+            {% if sun_el < 0 %} {% set sun_bucket = 'Below_Horizon' %}
+            {% elif sun_el < 15 %} {% set sun_bucket = 'Low_Sun' %}
+            {% elif sun_el < 40 %} {% set sun_bucket = 'Mid_Sun' %}
+            {% else %} {% set sun_bucket = 'High_Sun' %}
+            {% endif %}
+            {% set condition_key = home_mode ~ '_' ~ sun_bucket ~ '_' ~ (cloud_coverage//20 * 20) ~ '_' ~ season %}
+            {{ memory[condition_key] | length if condition_key in memory else 0 }}
+          using_learned: >
+            {% set memory_raw = states('input_text.adaptive_memory_laundry') %}
+            {% set memory = memory_raw | from_json if memory_raw not in ['unknown', 'unavailable', ''] else {} %}
+            {% set home_mode = states('input_select.home_state') %}
+            {% set cloud_coverage = state_attr('weather.pirateweather', 'cloud_coverage') | int(0) %}
+            {% set season = states('sensor.current_season') %}
+            {% set sun_el = state_attr('sun.sun', 'elevation') | float(0) %}
+            {% if sun_el < 0 %} {% set sun_bucket = 'Below_Horizon' %}
+            {% elif sun_el < 15 %} {% set sun_bucket = 'Low_Sun' %}
+            {% elif sun_el < 40 %} {% set sun_bucket = 'Mid_Sun' %}
+            {% else %} {% set sun_bucket = 'High_Sun' %}
+            {% endif %}
+            {% set condition_key = home_mode ~ '_' ~ sun_bucket ~ '_' ~ (cloud_coverage//20 * 20) ~ '_' ~ season %}
+            {{ condition_key in memory and (memory[condition_key] | length) >= states('input_number.confirmation_threshold') | int(4) }}
+        icon: >-
+          {% set using_learned = state_attr('sensor.learned_brightness_laundry', 'using_learned') | default(false) %}
+          {{ 'mdi:brain' if using_learned else 'mdi:brain-off-outline' }}
+
+      - name: "Learned Brightness Living Room"
+        unique_id: learned_brightness_living_room_v1
+        unit_of_measurement: "%"
+        state: >-
+          {% set memory_raw = states('input_text.adaptive_memory_livingroom') %}
+          {% set memory = memory_raw | from_json if memory_raw not in ['unknown', 'unavailable', ''] else {} %}
+          {% set home_mode = states('input_select.home_state') %}
+          {% set sun_el = state_attr('sun.sun', 'elevation') | float(0) %}
+          {% set cloud_coverage = state_attr('weather.pirateweather', 'cloud_coverage') | int(0) %}
+          {% set season = states('sensor.current_season') %}
+          
+          {% if sun_el < 0 %} {% set sun_bucket = 'Below_Horizon' %}
+          {% elif sun_el < 15 %} {% set sun_bucket = 'Low_Sun' %}
+          {% elif sun_el < 40 %} {% set sun_bucket = 'Mid_Sun' %}
+          {% else %} {% set sun_bucket = 'High_Sun' %}
+          {% endif %}
+          
+          {% set condition_key = home_mode ~ '_' ~ sun_bucket ~ '_' ~ (cloud_coverage//20 * 20) ~ '_' ~ season %}
+          
+          {% if condition_key in memory and (memory[condition_key] | length) >= states('input_number.confirmation_threshold') | int %}
+            {% set values = memory[condition_key] %}
+            {% if is_state('input_boolean.use_average_livingroom', 'on') %}
+              {{ (values | sum / (values | length)) | round(0) }}
+            {% else %}
+              {% set sorted_vals = values | sort %}
+              {% set mid = (sorted_vals | length) // 2 %}
+              {% if (sorted_vals | length) % 2 == 0 %}
+                {{ ((sorted_vals[mid-1] + sorted_vals[mid]) / 2) | round(0) }}
+              {% else %}
+                {{ sorted_vals[mid] | round(0) }}
+              {% endif %}
+            {% endif %}
+          {% else %}
+            {{ states('sensor.intelligent_brightness_living_room') | int(50) }}
+          {% endif %}
+        attributes:
+          confirmations: >
+            {% set memory_raw = states('input_text.adaptive_memory_livingroom') %}
+            {% set memory = memory_raw | from_json if memory_raw not in ['unknown', 'unavailable', ''] else {} %}
+            {% set home_mode = states('input_select.home_state') %}
+            {% set sun_el = state_attr('sun.sun', 'elevation') | float(0) %}
+            {% set cloud_coverage = state_attr('weather.pirateweather', 'cloud_coverage') | int(0) %}
+            {% set season = states('sensor.current_season') %}
+            {% if sun_el < 0 %} {% set sun_bucket = 'Below_Horizon' %}
+            {% elif sun_el < 15 %} {% set sun_bucket = 'Low_Sun' %}
+            {% elif sun_el < 40 %} {% set sun_bucket = 'Mid_Sun' %}
+            {% else %} {% set sun_bucket = 'High_Sun' %}
+            {% endif %}
+            {% set condition_key = home_mode ~ '_' ~ sun_bucket ~ '_' ~ (cloud_coverage//20 * 20) ~ '_' ~ season %}
+            {{ condition_key in memory and (memory[condition_key] | length) >= states('input_number.confirmation_threshold') | int(4) }}
+        icon: >-
+          {% set using_learned = state_attr('sensor.learned_brightness_living_room', 'using_learned') | default(false) %}
+          {{ 'mdi:brain' if using_learned else 'mdi:brain-off-outline' }}
+
+      # Enhanced Dashboard Sensors  
+      - name: "Live Evening Trigger Analysis"
+        unique_id: live_evening_trigger_analysis_v1
+        availability: >-
+          {{ states('input_number.manual_evening_elevation_setting') not in ['unknown', 'unavailable'] and
+             states('input_datetime.evening_time_cutoff') not in ['unknown', 'unavailable'] and
+             states('input_boolean.evening_mode_override') not in ['unknown', 'unavailable'] }}
+        state: >-
+          {% set sun_el = state_attr('sun.sun', 'elevation') | float(0) %}
+          {% set learned_el = states('input_number.manual_evening_elevation_setting') | float(4) %}
+          {% set time_check = now().hour >= 15 %}
+          {% set override = is_state('input_boolean.evening_mode_override', 'on') %}
+          {% if override %} Manual Override Active
+          {% elif now() > today_at(states('input_datetime.evening_time_cutoff') | default('20:00:00')) %} Time Failsafe Active
+          {% elif sun_el < learned_el and time_check %} Elevation Trigger Ready
+          {% else %} Waiting for Conditions
+          {% endif %}
+        attributes:
+          logic_breakdown: >-
+            Sun: {{ state_attr('sun.sun', 'elevation') | round(1) }}° | 
+            Learned: {{ states('input_number.manual_evening_elevation_setting') }}° | 
+            Time OK: {{ 'Yes' if now().hour >= 15 else 'No' }} | 
+            Override: {{ 'Yes' if is_state('input_boolean.evening_mode_override', 'on') else 'No' }}
+
+      - name: "Learning Management Dashboard"
+        unique_id: learning_management_dashboard_v1
+        state: >-
+          {% set enabled = is_state('input_boolean.adaptive_learning_enabled', 'on') %}
+          {% if enabled %} System Active
+          {% else %} System Disabled
+          {% endif %}
+
+      - name: "Learned Behavior Status"
+        unique_id: learned_behavior_status_v1
+        state: >-
+          {% set bedroom = states('sensor.learned_brightness_bedroom') | int(0) %}
+          {% set kitchen = states('sensor.learned_brightness_kitchen') | int(0) %}
+          {% set bathroom = states('sensor.learned_brightness_bathroom') | int(0) %}
+          {% set hallway = states('sensor.learned_brightness_hallway') | int(0) %}
+          {% set laundry = states('sensor.learned_brightness_laundry') | int(0) %}
+          {% set living_room = states('sensor.learned_brightness_living_room') | int(0) %}
+          {% set total = [bedroom, kitchen, bathroom, hallway, laundry, living_room] | select('>', 0) | list | length %}
+          {{ total }}/6 Rooms Learning
+
+      - name: "Live Bedroom Teaching Analysis"
+        unique_id: live_bedroom_teaching_analysis_v1
+        state: >-
+          {% if is_state('input_boolean.adaptive_learning_enabled', 'on') %}
+            Ready for Teaching
+          {% else %}
+            Learning Disabled
+          {% endif %}
+        attributes:
+          current_conditions: >-
+            Light: {{ states('light.closet') | title }} | 
+            Brightness: {{ state_attr('light.closet', 'brightness') or 'Off' }} | 
+            Home Mode: {{ states('input_select.home_state') }}
+          logic_result: >-
+            Target: {{ states('sensor.bedroom_target_brightness') }}% | 
+            Source: {{ state_attr('sensor.bedroom_target_brightness', 'calculation_source') }}
+          teaching_preview: >-
+            Current settings would be saved as learning data for {{ states('input_select.home_state') }} mode
+
+      - name: "Live Kitchen Teaching Analysis"
+        unique_id: live_kitchen_teaching_analysis_v1
+        state: >-
+          {% if is_state('input_boolean.adaptive_learning_enabled', 'on') %}
+            Ready for Teaching
+          {% else %}
+            Learning Disabled
+          {% endif %}
+        attributes:
+          current_conditions: >-
+            Light: {{ states('light.kitchen_main_lights') | title }} | 
+            Brightness: {{ state_attr('light.kitchen_main_lights', 'brightness') or 'Off' }} | 
+            Home Mode: {{ states('input_select.home_state') }}
+          logic_result: >-
+            Target: {{ states('sensor.kitchen_target_brightness') }}% | 
+            Source: {{ state_attr('sensor.kitchen_target_brightness', 'calculation_source') }}
+
+      - name: "Live Bathroom Teaching Analysis"
+        unique_id: live_bathroom_teaching_analysis_v1
+        state: >-
+          {% if is_state('input_boolean.adaptive_learning_enabled', 'on') %}
+            Ready for Teaching  
+          {% else %}
+            Learning Disabled
+          {% endif %}
+        attributes:
+          current_conditions: >-
+            Light: {{ states('light.bathroom_2_main_lights') | title }} | 
+            Brightness: {{ state_attr('light.bathroom_2_main_lights', 'brightness') or 'Off' }} | 
+            Home Mode: {{ states('input_select.home_state') }}
+          logic_result: >-
+            Target: {{ states('sensor.bathroom_target_brightness') }}% | 
+            Source: {{ state_attr('sensor.bathroom_target_brightness', 'calculation_source') }}
+
+      - name: "Live Hallway Teaching Analysis"
+        unique_id: live_hallway_teaching_analysis_v1
+        state: >-
+          {% if is_state('input_boolean.adaptive_learning_enabled', 'on') %}
+            Ready for Teaching
+          {% else %}
+            Learning Disabled
+          {% endif %}
+        attributes:
+          current_conditions: >-
+            Light: {{ states('light.hallway') | title }} | 
+            Brightness: {{ state_attr('light.hallway', 'brightness') or 'Off' }} | 
+            Home Mode: {{ states('input_select.home_state') }}
+          logic_result: >-
+            Target: {{ states('sensor.hallway_target_brightness') }}% | 
+            Source: {{ state_attr('sensor.hallway_target_brightness', 'calculation_source') }}
+
+      - name: "Live Laundry Teaching Analysis"
+        unique_id: live_laundry_teaching_analysis_v1
+        state: >-
+          {% if is_state('input_boolean.adaptive_learning_enabled', 'on') %}
+            Ready for Teaching
+          {% else %}
+            Learning Disabled  
+          {% endif %}
+        attributes:
+          current_conditions: >-
+            Light: {{ states('light.laundry_room') | title }} | 
+            Brightness: {{ state_attr('light.laundry_room', 'brightness') or 'Off' }} | 
+            Home Mode: {{ states('input_select.home_state') }}
+          logic_result: >-
+            Target: {{ states('sensor.laundry_room_target_brightness') }}% | 
+            Source: {{ state_attr('sensor.laundry_room_target_brightness', 'calculation_source') }}
+
+      - name: "Live Livingroom Teaching Analysis"
+        unique_id: live_livingroom_teaching_analysis_v1
+        state: >-
+          {% if is_state('input_boolean.adaptive_learning_enabled', 'on') %}
+            Ready for Teaching
+          {% else %}
+            Learning Disabled
+          {% endif %}
+        attributes:
+          current_conditions: >-
+            Light: {{ states('light.lamp_1') | title }}/{{ states('light.lamp_2') | title }} | 
+            Brightness: {{ state_attr('light.lamp_1', 'brightness') or 'Off' }} | 
+            Home Mode: {{ states('input_select.home_state') }}
+          logic_result: >-
+            Target: {{ states('sensor.living_room_target_brightness') }}% | 
+            Source: {{ state_attr('sensor.living_room_target_brightness', 'calculation_source') }}
+
+script:
+  teach_hallway_current_brightness:
+    alias: "ALS - Teach Hallway's Current Brightness"
+    sequence:
+      - action: pyscript.als_teach_room
+        data:
+          room: "hallway"
+          brightness: "{{ (state_attr('light.hallway', 'brightness') | int(0) * 100 / 255) | round(0) }}"
+      - action: pyscript.parallel_test_run_now
+
+  teach_laundry_current_brightness:
+    alias: "ALS - Teach Laundry's Current Brightness"
+    sequence:
+      - action: pyscript.als_teach_room
+        data:
+          room: "laundry"
+          brightness: "{{ (state_attr('light.laundry_room', 'brightness') | int(0) * 100 / 255) | round(0) }}"
+      - action: pyscript.parallel_test_run_now
+
+  teach_kitchen_current_brightness:
+    alias: "ALS - Teach Kitchen's Current Brightness"
+    sequence:
+      - action: pyscript.als_teach_room
+        data:
+          room: "kitchen"
+          brightness: "{{ (state_attr('light.kitchen_main_lights', 'brightness') | int(0) * 100 / 255) | round(0) }}"
+      - action: pyscript.parallel_test_run_now
+
+  teach_living_room_current_brightness:
+    alias: "ALS - Teach Living Room's Current Brightness"
+    sequence:
+      - action: pyscript.als_teach_room
+        data:
+          room: "living_room"
+          brightness: "{{ (state_attr('light.lamp_1', 'brightness') | int(0) * 100 / 255) | round(0) }}"
+      - action: pyscript.parallel_test_run_now
+
+  teach_bathroom_current_brightness:
+    alias: "ALS - Teach Bathroom's Current Brightness"
+    sequence:
+      - action: pyscript.als_teach_room
+        data:
+          room: "bathroom"
+          brightness: "{{ (state_attr('light.bathroom_2_main_lights', 'brightness') | int(0) * 100 / 255) | round(0) }}"
+      - action: pyscript.parallel_test_run_now
+
+  teach_bedroom_current_brightness:
+    alias: "ALS - Teach Bedroom's Current Brightness"
+    sequence:
+      - action: pyscript.als_teach_room
+        data:
+          room: "bedroom"
+          brightness: "{{ (state_attr('light.closet', 'brightness') | int(0) * 100 / 255) | round(0) }}"
+      - action: pyscript.parallel_test_run_now
+          
+  # The scripts below are for managing the learning data
+  reset_evening_elevation:
+    alias: "Reset Evening Elevation"
+    sequence:
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.manual_evening_elevation_setting
+        data:
+          value: 4
+
+  backup_learning_data:
+    alias: "Backup Learning Data"
+    sequence:
+      - action: logbook.log
+        data:
+          name: "Learning Backup"
+          message: "Learning data backup requested"
+
+  bulk_reset_learning_data:
+    alias: "Nuclear Reset All Learning Data"
+    sequence:
+      - action: input_text.set_value
+        target:
+          entity_id:
+            - input_text.adaptive_memory_bedroom
+            - input_text.adaptive_memory_kitchen
+            - input_text.adaptive_memory_bathroom
+            - input_text.adaptive_memory_hallway
+            - input_text.adaptive_memory_laundry
+            - input_text.adaptive_memory_livingroom
+        data:
+          value: ""
+
+  reset_bedroom_learning:
+    alias: "Reset Bedroom Learning"
+    sequence:
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.adaptive_memory_bedroom
+        data:
+          value: ""
+
+  reset_kitchen_learning:
+    alias: "Reset Kitchen Learning"
+    sequence:
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.adaptive_memory_kitchen
+        data:
+          value: ""
+
+  reset_bathroom_learning:
+    alias: "Reset Bathroom Learning"
+    sequence:
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.adaptive_memory_bathroom
+        data:
+          value: ""
+
+  reset_hallway_learning:
+    alias: "Reset Hallway Learning"
+    sequence:
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.adaptive_memory_hallway
+        data:
+          value: ""
+
+  reset_laundry_learning:
+    alias: "Reset Laundry Learning"
+    sequence:
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.adaptive_memory_laundry
+        data:
+          value: ""
+
+  reset_livingroom_learning:
+    alias: "Reset Living Room Learning"
+    sequence:
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.adaptive_memory_livingroom
+        data:
+          value: ""

@@ -1,0 +1,464 @@
+###########################################################
+# Complete Washer Dryer Reminder Package with Scripts
+# Author: HASS-Master for Frank Elaschat  
+# Version: 2.0.3 - Fixed dryer monitoring automation
+# Updated: 2025-08-31
+###########################################################
+input_boolean:
+  washer_notifications:
+    name: "Washer Notifications"
+    icon: mdi:washing-machine
+    initial: true
+  dryer_reminder_enable:
+    name: "Dryer Reminder Enable"
+    icon: mdi:tumble-dryer
+    initial: true
+  clothes_in_dryer_pending:
+    name: "Clothes Need Moving to Dryer"
+    icon: mdi:clock-alert
+    initial: false
+  washer_cleaning_reminder_enable:
+    name: "Washer Cleaning Reminder Enable"
+    icon: mdi:broom
+    initial: true
+  washer_cleaning_pending:
+    name: "Washer Cleaning Needed"
+    icon: mdi:washing-machine-alert
+    initial: false
+  dryer_running:
+    name: "Dryer Running"
+    icon: mdi:tumble-dryer
+    initial: false
+input_datetime:
+  washer_last_cleaned:
+    name: "Washer Last Cleaned Date"
+    has_date: true
+    has_time: false
+input_number:
+  dryer_power_threshold:
+    name: "Dryer Power Threshold"
+    min: 10
+    max: 100
+    step: 10
+    unit_of_measurement: "W"
+    initial: 50
+    icon: mdi:tumble-dryer
+
+# SCRIPTS FOR REUSABLE ACTIONS
+script:
+  # Send iPhone notification with customizable content
+  send_iphone_notification:
+    alias: Send iPhone Notification
+    sequence:
+      - action: notify.mobile_app_iphone15
+        data:
+          title: "{{ title }}"
+          message: "{{ message }}"
+          data:
+            push:
+              sound: "{{ sound | default('default') }}"
+              interruption-level: "{{ interruption_level | default('active') }}"
+            actions: "{{ actions | default([]) }}"
+
+  # Send Alexa announcement
+  send_alexa_announcement:
+    alias: Send Alexa Announcement
+    sequence:
+      - action: notify.alexa_media_everywhere_2
+        data:
+          message: "{{ message }}"
+          data:
+            type: announce
+            method: all
+
+  # Handle confirmation response (turn off boolean and send confirmation)
+  handle_confirmation:
+    alias: Handle Confirmation Response
+    sequence:
+      - action: input_boolean.turn_off
+        target:
+          entity_id: "{{ boolean_entity }}"
+      - action: notify.mobile_app_iphone15
+        data:
+          title: "{{ title }}"
+          message: "{{ message }}"
+          data:
+            push:
+              sound: "default"
+              interruption-level: "passive"
+
+  # Handle snooze response (turn off, wait, turn back on, send reminder)
+  handle_snooze:
+    alias: Handle Snooze Response
+    sequence:
+      - action: input_boolean.turn_off
+        target:
+          entity_id: "{{ boolean_entity }}"
+      - action: notify.mobile_app_iphone15
+        data:
+          title: "{{ snooze_title }}"
+          message: "{{ snooze_message }}"
+          data:
+            push:
+              sound: "default"
+              interruption-level: "passive"
+      - delay: "{{ delay_time | default('00:30:00') }}"
+      - action: input_boolean.turn_on
+        target:
+          entity_id: "{{ boolean_entity }}"
+      - action: notify.mobile_app_iphone15
+        data:
+          title: "{{ reminder_title }}"
+          message: "{{ reminder_message }}"
+          data:
+            push:
+              sound: "default"
+              interruption-level: "active"
+            actions: "{{ reminder_actions }}"
+
+  # Send washer done notification (checks dryer state)
+  send_washer_done_notification:
+    alias: Send Washer Done Notification
+    sequence:
+      - choose:
+          - conditions:
+              - condition: state
+                entity_id: input_boolean.dryer_running
+                state: "off"
+            sequence:
+              - action: notify.alexa_media_everywhere_2
+                data:
+                  message: "The washer is done"
+                  data:
+                    type: announce
+                    method: all
+              - action: notify.mobile_app_iphone15
+                data:
+                  title: "✅ Washer Done!"
+                  message: "The washer is done! Did you move the clothes to the dryer?"
+                  data:
+                    push:
+                      sound: "default"
+                      interruption-level: "active"
+                    actions:
+                      - action: "CLOTHES_IN_DRYER_YES"
+                        title: "✅ Yes, all moved!"
+                      - action: "CLOTHES_REMIND_30MIN"
+                        title: "⏰ Remind me later"
+              - action: input_boolean.turn_on
+                target:
+                  entity_id: input_boolean.clothes_in_dryer_pending
+          - conditions:
+              - condition: state
+                entity_id: input_boolean.dryer_running
+                state: "on"
+            sequence:
+              - action: notify.alexa_media_everywhere_2
+                data:
+                  message: "The washer is done"
+                  data:
+                    type: announce
+                    method: all
+              - action: notify.mobile_app_iphone15
+                data:
+                  title: "✅ Washer Done!"
+                  message: "The washer is done! I see the dryer is already running."
+                  data:
+                    push:
+                      sound: "default"
+                      interruption-level: "passive"
+
+  # Send dryer done notification
+  send_dryer_done_notification:
+    alias: Send Dryer Done Notification
+    sequence:
+      - action: notify.alexa_media_everywhere_2
+        data:
+          message: "The dryer is done"
+          data:
+            type: announce
+            method: all
+      - action: notify.mobile_app_iphone15
+        data:
+          title: "👕 Dryer Complete!"
+          message: "Your dryer cycle is finished! Time to fold the laundry."
+          data:
+            push:
+              sound: "default"
+              interruption-level: "active"
+
+automation:
+  # Monitor dryer running state - FIXED VERSION
+  - alias: "Monitor Dryer Running State"
+    id: monitor_dryer_running
+    description: "Track when dryer starts and stops running"
+    mode: restart
+    triggers:
+      - trigger: numeric_state
+        entity_id: sensor.dryer_dryer_electric_w_value
+        above: 50  # FIXED: Using static value as fallback
+        id: "dryer_start"
+      - trigger: numeric_state
+        entity_id: sensor.dryer_dryer_electric_w_value
+        below: 50  # FIXED: Using static value as fallback
+        for:
+          minutes: 2
+        id: "dryer_stop"
+    actions:
+      - choose:
+          - conditions:
+              - condition: trigger
+                id: "dryer_start"
+            sequence:
+              - action: input_boolean.turn_on
+                target:
+                  entity_id: input_boolean.dryer_running
+              - action: logbook.log
+                data:
+                  name: "Dryer Status"
+                  message: "Dryer started running"
+          - conditions:
+              - condition: trigger
+                id: "dryer_stop"
+            sequence:
+              - action: input_boolean.turn_off
+                target:
+                  entity_id: input_boolean.dryer_running
+              - action: logbook.log
+                data:
+                  name: "Dryer Status"
+                  message: "Dryer finished running"
+              - action: script.send_dryer_done_notification
+
+  # Main washer done notification - now with 1-minute debounce
+  - alias: "Simple Washer Done Notification"
+    id: simple_washer_done
+    description: "Alexa announces and iPhone notifies when washer is done, checks if dryer is running"
+    mode: single
+    triggers:
+      - trigger: numeric_state
+        entity_id: sensor.washer_power
+        below: 8
+        for:
+          minutes: 1  # NEW: Must stay below 8W for 1 minute
+    conditions:
+      - condition: state
+        entity_id: input_boolean.washer_notifications
+        state: "on"
+      - condition: state
+        entity_id: input_boolean.dryer_reminder_enable
+        state: "on"
+    actions:
+      - action: script.send_washer_done_notification
+
+  # Reminder every 15 minutes until confirmed
+  - alias: "Dryer Reminder Every 15min"
+    id: dryer_reminder_every_15min
+    description: "Keep reminding every 15min until clothes moved to dryer"
+    mode: restart
+    triggers:
+      - trigger: time_pattern
+        minutes: "/15"
+    conditions:
+      - condition: state
+        entity_id: input_boolean.washer_notifications
+        state: "on"
+      - condition: state
+        entity_id: input_boolean.dryer_reminder_enable
+        state: "on"
+      - condition: state
+        entity_id: input_boolean.clothes_in_dryer_pending
+        state: "on"
+      - condition: time
+        after: "08:00:00"
+        before: "21:00:00"
+    actions:
+      - action: script.send_iphone_notification
+        data:
+          title: "🔔 Reminder: Dryer?"
+          message: "Don't forget - did you move the clothes to the dryer?"
+          actions:
+            - action: "CLOTHES_IN_DRYER_YES"
+              title: "✅ Yes, all moved!"
+            - action: "CLOTHES_REMIND_30MIN"
+              title: "⏰ Remind me later"
+
+  # Handle "Yes, all moved!" response - now uses script
+  - alias: "Handle Clothes in Dryer Confirmed"
+    id: handle_clothes_in_dryer_yes
+    description: "Stop reminders when user confirms clothes in dryer"
+    mode: single
+    triggers:
+      - trigger: event
+        event_type: mobile_app_notification_action
+        event_data:
+          action: "CLOTHES_IN_DRYER_YES"
+    actions:
+      - action: script.handle_confirmation
+        data:
+          boolean_entity: input_boolean.clothes_in_dryer_pending
+          title: "👍 Perfect!"
+          message: "Great job! No more reminders."
+
+  # Handle "Remind me later" response - now uses script
+  - alias: "Handle Dryer Remind 30min"
+    id: handle_dryer_remind_30min
+    description: "Snooze dryer reminder for 30 minutes"
+    mode: restart
+    triggers:
+      - trigger: event
+        event_type: mobile_app_notification_action
+        event_data:
+          action: "CLOTHES_REMIND_30MIN"
+    actions:
+      - action: script.handle_snooze
+        data:
+          boolean_entity: input_boolean.clothes_in_dryer_pending
+          snooze_title: "⏰ Snoozed!"
+          snooze_message: "I'll remind you again in 30 minutes."
+          reminder_title: "🔔 Snooze Over!"
+          reminder_message: "Did you move the clothes to the dryer now?"
+          reminder_actions:
+            - action: "CLOTHES_IN_DRYER_YES"
+              title: "✅ Yes, all moved!"
+            - action: "CLOTHES_REMIND_30MIN"
+              title: "⏰ Remind me later"
+
+  # 30-day washer cleaning reminder - check after each wash cycle
+  - alias: "Washer Cleaning Reminder - Check After Cycle"
+    id: washer_cleaning_after_cycle
+    description: "Check if washer needs cleaning after each wash cycle (every 30 days)"
+    mode: single
+    triggers:
+      - trigger: numeric_state
+        entity_id: sensor.washer_power
+        below: 8
+        for:
+          minutes: 1  # UPDATED: Same 1-minute debounce for consistency
+    conditions:
+      - condition: state
+        entity_id: input_boolean.washer_notifications
+        state: "on"
+      - condition: state
+        entity_id: input_boolean.washer_cleaning_reminder_enable
+        state: "on"
+      - condition: state
+        entity_id: input_boolean.washer_cleaning_pending
+        state: "off"
+      - condition: time
+        after: "08:00:00"
+        before: "21:00:00"
+    actions:
+      - variables:
+          last_cleaned: "{{ states('input_datetime.washer_last_cleaned') }}"
+          days_since_cleaned: >-
+            {% if last_cleaned != 'unknown' %}
+              {{ ((as_timestamp(now()) - as_timestamp(last_cleaned)) / 86400) | round(0) }}
+            {% else %}
+              31
+            {% endif %}
+      
+      - if:
+          - condition: template
+            value_template: "{{ days_since_cleaned >= 30 }}"
+        then:
+          - action: input_boolean.turn_on
+            target:
+              entity_id: input_boolean.washer_cleaning_pending
+          
+          - action: script.send_iphone_notification
+            data:
+              title: "🧽 Washer Maintenance Time!"
+              message: >-
+                {% if last_cleaned != 'unknown' %}
+                It's been {{ days_since_cleaned }} days since you last cleaned the washer. Time for a cleaning cycle?
+                {% else %}
+                When did you last clean the washer? It's been a while - time for a maintenance cycle?
+                {% endif %}
+              actions:
+                - action: "WASHER_CLEANED_YES"
+                  title: "✅ Just cleaned it!"
+                - action: "WASHER_CLEAN_REMIND_LATER"
+                  title: "🌙 Remind me tonight"
+
+  # Nag about washer cleaning every hour until done
+  - alias: "Washer Cleaning Reminder - Nag Every Hour"
+    id: washer_cleaning_nag_hourly
+    description: "Keep reminding about washer cleaning every hour until confirmed"
+    mode: restart
+    triggers:
+      - trigger: time_pattern
+        minutes: 0
+    conditions:
+      - condition: state
+        entity_id: input_boolean.washer_notifications
+        state: "on"
+      - condition: state
+        entity_id: input_boolean.washer_cleaning_reminder_enable
+        state: "on"
+      - condition: state
+        entity_id: input_boolean.washer_cleaning_pending
+        state: "on"
+      - condition: time
+        after: "09:00:00"
+        before: "21:00:00"
+    actions:
+      - action: script.send_iphone_notification
+        data:
+          title: "🔔 Cleaning Reminder"
+          message: "Don't forget - your washer needs a cleaning cycle soon!"
+          actions:
+            - action: "WASHER_CLEANED_YES"
+              title: "✅ Just cleaned it!"
+            - action: "WASHER_CLEAN_REMIND_LATER"
+              title: "🌙 Remind me tonight"
+
+  # Handle "Just cleaned it" response - now uses script
+  - alias: "Handle Washer Cleaned Confirmed"
+    id: handle_washer_cleaned_yes
+    description: "Stop reminders when user confirms washer was cleaned"
+    mode: single
+    triggers:
+      - trigger: event
+        event_type: mobile_app_notification_action
+        event_data:
+          action: "WASHER_CLEANED_YES"
+    actions:
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.washer_cleaning_pending
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.washer_last_cleaned
+        data:
+          date: "{{ now().strftime('%Y-%m-%d') }}"
+      - action: script.handle_confirmation
+        data:
+          boolean_entity: input_boolean.washer_cleaning_pending
+          title: "🌟 Excellent!"
+          message: "Thanks! I'll remind you again in 30 days."
+
+  # Handle "Remind tonight" response - now uses script
+  - alias: "Handle Washer Clean Remind Tonight"
+    id: handle_washer_clean_remind_tonight
+    description: "Snooze washer cleaning reminder until evening"
+    mode: restart
+    triggers:
+      - trigger: event
+        event_type: mobile_app_notification_action
+        event_data:
+          action: "WASHER_CLEAN_REMIND_LATER"
+    actions:
+      - action: script.handle_snooze
+        data:
+          boolean_entity: input_boolean.washer_cleaning_pending
+          snooze_title: "🌙 Got it!"
+          snooze_message: "I'll remind you tonight about washer cleaning."
+          delay_time: "19:00:00"
+          reminder_title: "🌆 Evening Reminder!"
+          reminder_message: "Good time to run a washer cleaning cycle tonight?"
+          reminder_actions:
+            - action: "WASHER_CLEANED_YES"
+              title: "✅ Just cleaned it!"
+            - action: "WASHER_CLEAN_REMIND_LATER"
+              title: "📅 Maybe tomorrow"
