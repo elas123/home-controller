@@ -20,6 +20,8 @@ MOTION_2      = "binary_sensor.kitchen_iris_frig_occupancy"
 HOME_STATE_PRIMARY = "pyscript.home_state"
 HOME_STATE_FALLBACK = "input_select.home_state"
 ALLOWED_MODES = {"Day", "Evening", "Night", "Early Morning"}  # mains are NOT blocked in Evening
+WLED_ACTIVE_MODES = {"Evening", "Night", "Early Morning"}
+WLED_ENFORCED_OFF_MODES = {"Day", "Away"}
 NIGHT_MAIN_RESUME_HOUR = 4
 NIGHT_MAIN_RESUME_MINUTE = 45
 
@@ -89,6 +91,22 @@ def _light_off(entity_id: str):
         _info(f"Light OFF -> {entity_id}")
     except Exception as e:
         _error(f"Light off error on {entity_id}: {e}")
+
+
+def _ensure_wled_off(reason: str):
+    """Turn off both WLED strips when mode disallows them."""
+    sink_state = _state(SINK_LIGHT)
+    fridge_state = _state(FRIDGE_LIGHT)
+    if sink_state == "off" and fridge_state == "off":
+        _info(f"WLEDs already OFF ({reason})")
+        return
+
+    _info(f"Ensuring WLEDs OFF ({reason})")
+    if sink_state != "off":
+        _light_off(SINK_LIGHT)
+    if fridge_state != "off":
+        _light_off(FRIDGE_LIGHT)
+
 
 def _any_motion_active() -> bool:
     return (_state(MOTION_1) == "on") or (_state(MOTION_2) == "on")
@@ -190,11 +208,16 @@ def _apply_for_motion(active: bool, reason: str):
     now = datetime.now()
     night_mode = hs == "Night"
     night_hold_active = night_mode and not _night_mains_window_active(now)
+    wled_allowed = hs in WLED_ACTIVE_MODES
 
     if active:
-        # WLEDs on preset night-100
-        _set_preset(SINK_PRESET, "night-100")
-        _set_preset(FRIDGE_PRESET, "night-100")
+        if wled_allowed:
+            # WLEDs on preset night-100
+            _set_preset(SINK_PRESET, "night-100")
+            _set_preset(FRIDGE_PRESET, "night-100")
+        else:
+            _info("Skipping WLED activation – mode disallows it")
+            _ensure_wled_off(f"motion_active:{hs}")
 
         if night_hold_active:
             _info("SKIPPING main lights – Night mode hold active (pre-04:45)")
@@ -205,9 +228,12 @@ def _apply_for_motion(active: bool, reason: str):
             _light_on(KITCHEN_MAIN, brightness_pct=br)
 
     else:
-        # WLED behavior: sink OFF, fridge to night
-        _light_off(SINK_LIGHT)
-        _set_preset(FRIDGE_PRESET, "night")
+        if wled_allowed:
+            # WLED behavior: sink OFF, fridge to night
+            _light_off(SINK_LIGHT)
+            _set_preset(FRIDGE_PRESET, "night")
+        else:
+            _ensure_wled_off(f"motion_clear:{hs}")
 
         if TURN_MAIN_OFF_ON_CLEAR:
             if night_hold_active:
@@ -231,6 +257,13 @@ async def kitchen_motion_listener(**kwargs):
             _info("Clear aborted (motion returned during debounce)")
             return
         _apply_for_motion(False, reason="debounced clear")
+
+
+@state_trigger(HOME_STATE_PRIMARY, state_check_now=True)
+def kitchen_home_state_listener(value=None, old_value=None, **kwargs):
+    mode = value or _home_state()
+    if mode in WLED_ENFORCED_OFF_MODES:
+        _ensure_wled_off(f"home_state:{mode}")
 
 # --- manual tests ---
 @service("pyscript.kitchen_wled_smoke_test")
