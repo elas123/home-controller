@@ -19,18 +19,33 @@ MOTION_1      = "binary_sensor.aqara_motion_sensor_p1_occupancy"
 MOTION_2      = "binary_sensor.kitchen_iris_frig_occupancy"
 HOME_STATE_PRIMARY = "pyscript.home_state"
 HOME_STATE_FALLBACK = "input_select.home_state"
-ALLOWED_MODES = {"Evening", "Night", "Early Morning"}  # mains are NOT blocked in Evening
+ALLOWED_MODES = {"Day", "Evening", "Night", "Early Morning"}  # mains are NOT blocked in Evening
+WLED_ALLOWED_MODES = {"Evening", "Night", "Early Morning"}
+NIGHT_MAIN_RESUME_HOUR = 4
+NIGHT_MAIN_RESUME_MINUTE = 45
+
+# Brightness source toggles / sensors (follow controller priority stack)
+RAMP_ACTIVE = "input_boolean.sleep_in_ramp_active"
+RAMP_BRIGHTNESS = "sensor.sleep_in_ramp_brightness"
+ADAPTIVE_LEARNING_ENABLED = "input_boolean.adaptive_learning_enabled"
+LEARNED_BRIGHTNESS = "sensor.learned_brightness_kitchen"
+ALL_ROOMS_USE_PYSCRIPT = "input_boolean.all_rooms_use_pyscript"
+PYSCRIPT_BRIGHTNESS = "pyscript.test_kitchen_brightness"
+INTELLIGENT_LIGHTING_ENABLED = "input_boolean.intelligent_lighting_enable"
+INTELLIGENT_BRIGHTNESS = "sensor.intelligent_brightness_kitchen"
 
 # ===== Behavior knobs =====
 CLEAR_DEBOUNCE_SEC = 5
 TEST_BYPASS_MODE   = False       # set True to ignore mode gating while testing
 
-# Per-mode brightness for the main lights when motion turns them on
-MAIN_BRIGHTNESS = {
-    "Evening": 60,          # comfortable brightness for Evening
-    "Night":  10,           # very low at Night (BUT BLOCKED - see below)
-    "Early Morning": 35,    # soft pre-dawn level
+# Fallback brightness for the main lights when upstream sources are unavailable
+FALLBACK_BRIGHTNESS = {
+    "Day": 70,            # matches controller fallback for Day target brightness
+    "Evening": 60,        # comfortable brightness for Evening
+    "Night": 10,          # only used after the 04:45 resume guard while still Night
+    "Early Morning": 35,  # soft pre-dawn level
 }
+FALLBACK_DEFAULT_BRIGHTNESS = 60
 # Turn mains off when motion clears?
 TURN_MAIN_OFF_ON_CLEAR = True
 # ===========================
@@ -79,7 +94,98 @@ def _light_off(entity_id: str):
 def _any_motion_active() -> bool:
     return (_state(MOTION_1) == "on") or (_state(MOTION_2) == "on")
 
+
+def _clamp_pct(value) -> int | None:
+    try:
+        pct = int(float(value))
+    except (TypeError, ValueError):
+        return None
+    return max(1, min(100, pct))
+
+
+def _fallback_brightness_for(mode: str) -> int:
+    return FALLBACK_BRIGHTNESS.get(mode, FALLBACK_DEFAULT_BRIGHTNESS)
+
+
+def _resolve_kitchen_brightness(home_mode: str) -> int:
+    """Resolve kitchen brightness using controller priority stack."""
+
+    invalid = {None, "", "unknown", "unavailable"}
+
+    try:
+        if _state(RAMP_ACTIVE) == "on":
+            ramp = _state(RAMP_BRIGHTNESS)
+            if ramp not in invalid:
+                val = _clamp_pct(ramp)
+                if val is not None:
+                    _info(f"Brightness source: Morning Ramp ({val}%)")
+                    return val
+
+        if _state(ADAPTIVE_LEARNING_ENABLED) == "on":
+            learned = _state(LEARNED_BRIGHTNESS)
+            if learned not in invalid:
+                using_learned = False
+                try:
+                    attrs = state.getattr(LEARNED_BRIGHTNESS) or {}
+                    using_learned = bool(attrs.get("using_learned"))
+                except Exception:
+                    using_learned = False
+                if using_learned:
+                    val = _clamp_pct(learned)
+                    if val is not None:
+                        _info(f"Brightness source: Adaptive Learning ({val}%)")
+                        return val
+
+        if _state(ALL_ROOMS_USE_PYSCRIPT) == "on":
+            pys_val = _state(PYSCRIPT_BRIGHTNESS)
+            if pys_val not in invalid:
+                val = _clamp_pct(pys_val)
+                if val is not None:
+                    _info(f"Brightness source: PyScript Engine ({val}%)")
+                    return val
+
+        if _state(INTELLIGENT_LIGHTING_ENABLED) == "on":
+            intelligent = _state(INTELLIGENT_BRIGHTNESS)
+            if intelligent not in invalid:
+                val = _clamp_pct(intelligent)
+                if val is not None:
+                    _info(f"Brightness source: Intelligent System ({val}%)")
+                    return val
+
+    except Exception as exc:
+        _warn(f"Brightness resolution failed: {exc}")
+
+    fallback = _fallback_brightness_for(home_mode)
+    label = f"Fallback {home_mode}" if home_mode in FALLBACK_BRIGHTNESS else "Fallback Default"
+    _info(f"Brightness source: {label} ({fallback}%)")
+    return fallback
+
+
+def _night_mains_window_active(now=None) -> bool:
+    """Return True if mains may run while home state is Night."""
+    if now is None:
+        now = datetime.now()
+
+    hour = now.hour
+    minute = now.minute
+
+    if hour < NIGHT_MAIN_RESUME_HOUR:
+        return False
+    if hour == NIGHT_MAIN_RESUME_HOUR and minute < NIGHT_MAIN_RESUME_MINUTE:
+        return False
+    if hour >= 12:
+        return False
+
+    return True
+
 # --- core behavior ---
+def _ensure_wled_off(reason: str | None = None):
+    if reason:
+        _info(f"WLED off ({reason})")
+    _light_off(SINK_LIGHT)
+    _light_off(FRIDGE_LIGHT)
+
+
 def _apply_for_motion(active: bool, reason: str):
     hs = _home_state()
     if not TEST_BYPASS_MODE and hs not in ALLOWED_MODES:
@@ -88,26 +194,40 @@ def _apply_for_motion(active: bool, reason: str):
 
     _info(f"APPLY motion_active={active} mode={hs} reason={reason}")
 
-    if active:
-        # WLEDs on preset night-100
-        _set_preset(SINK_PRESET, "night-100")
-        _set_preset(FRIDGE_PRESET, "night-100")
+    now = datetime.now()
+    night_mode = hs == "Night"
+    night_hold_active = night_mode and not _night_mains_window_active(now)
+    wled_allowed = hs in WLED_ALLOWED_MODES
 
-        # Main lights ON - BUT NOT IN NIGHT MODE
-        if hs != "Night":
-            br = MAIN_BRIGHTNESS.get(hs, 50)
-            _light_on(KITCHEN_MAIN, brightness_pct=br)
+    if active:
+        if wled_allowed:
+            # WLEDs on preset night-100
+            _set_preset(SINK_PRESET, "night-100")
+            _set_preset(FRIDGE_PRESET, "night-100")
         else:
-            _info(f"SKIPPING main lights - Night mode (WLED only)")
+            _ensure_wled_off("mode disallows WLED during motion")
+
+        if night_hold_active:
+            _info("SKIPPING main lights – Night mode hold active (pre-04:45)")
+        else:
+            if night_mode:
+                _info("Night resume window reached (>=04:45) – turning mains on")
+            br = _resolve_kitchen_brightness(hs if not night_mode else "Night")
+            _light_on(KITCHEN_MAIN, brightness_pct=br)
 
     else:
-        # WLED behavior: sink OFF, fridge to night
-        _light_off(SINK_LIGHT)
-        _set_preset(FRIDGE_PRESET, "night")
+        if wled_allowed:
+            # WLED behavior: sink OFF, fridge to night
+            _light_off(SINK_LIGHT)
+            _set_preset(FRIDGE_PRESET, "night")
+        else:
+            _ensure_wled_off("mode disallows WLED on clear")
 
-        # Main lights OFF if configured AND they were turned on (not in Night mode)
-        if TURN_MAIN_OFF_ON_CLEAR and hs != "Night":
-            _light_off(KITCHEN_MAIN)
+        if TURN_MAIN_OFF_ON_CLEAR:
+            if night_hold_active:
+                _info("Leaving main lights alone – Night hold still active")
+            else:
+                _light_off(KITCHEN_MAIN)
 
 # --- listeners (no YAML automation needed) ---
 @state_trigger(MOTION_1)
@@ -126,6 +246,14 @@ async def kitchen_motion_listener(**kwargs):
             return
         _apply_for_motion(False, reason="debounced clear")
 
+
+@state_trigger(HOME_STATE_PRIMARY)
+@state_trigger(HOME_STATE_FALLBACK)
+def kitchen_mode_change_guard(**kwargs):
+    hs = _home_state()
+    if hs in {"Day", "Away"}:
+        _ensure_wled_off(f"home mode -> {hs}")
+
 # --- manual tests ---
 @service("pyscript.kitchen_wled_smoke_test")
 def kitchen_wled_smoke_test():
@@ -133,7 +261,7 @@ def kitchen_wled_smoke_test():
     _info("SMOKE: WLEDs -> night-100; mains on; then sink OFF, fridge -> night")
     _set_preset(SINK_PRESET, "night-100")
     _set_preset(FRIDGE_PRESET, "night-100")
-    _light_on(KITCHEN_MAIN, brightness_pct=MAIN_BRIGHTNESS.get("Evening", 60))
+    _light_on(KITCHEN_MAIN, brightness_pct=_fallback_brightness_for("Evening"))
     time.sleep(2)
     _light_off(SINK_LIGHT)
     _set_preset(FRIDGE_PRESET, "night")
