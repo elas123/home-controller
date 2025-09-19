@@ -19,7 +19,7 @@ MOTION_1      = "binary_sensor.aqara_motion_sensor_p1_occupancy"
 MOTION_2      = "binary_sensor.kitchen_iris_frig_occupancy"
 HOME_STATE_PRIMARY = "pyscript.home_state"
 HOME_STATE_FALLBACK = "input_select.home_state"
-ALLOWED_MODES = {"Evening", "Night", "Early Morning"}  # mains are NOT blocked in Evening
+ALLOWED_MODES = {"Day", "Evening", "Night", "Early Morning"}  # mains are NOT blocked in Evening
 
 # ===== Behavior knobs =====
 CLEAR_DEBOUNCE_SEC = 5
