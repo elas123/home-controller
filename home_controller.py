@@ -86,8 +86,12 @@ _day_ready_candidate_since = None
 
 _suppress_home_state_trigger = False
 
+_missing_helper_notified: set[str] = set()
+
 _DAY_READY_DEBOUNCE_SECONDS = 120  # 2 minute debounce for day readiness
 _MISSING_HELPER_NOTIFICATION_ID = "hc_missing_helper"
+_MAX_RAMP_RUNTIME = timedelta(hours=6)
+_DEFAULT_DAY_FLOOR = dt_time(7, 30)
 
 _MQTT_PREFIX = "home/rework/controller"
 
@@ -367,6 +371,10 @@ def _cancel_task_if_running(existing_task, name: str):
 @catch_hc_error("_notify_missing_helper")
 def _notify_missing_helper(helper_name: str, fallback_desc: str):
     """Notify user about missing helper sensor with fallback description"""
+    global _missing_helper_notified
+    if helper_name in _missing_helper_notified:
+        return
+    _missing_helper_notified.add(helper_name)
     try:
         service.call(
             "persistent_notification",
@@ -377,6 +385,21 @@ def _notify_missing_helper(helper_name: str, fallback_desc: str):
         )
     except Exception as e:
         log.warning(f"[HC] Could not send missing helper notification for {helper_name}: {e}")
+
+
+def _clear_missing_helper_warning(helper_name: str):
+    """Clear persistent notification tracking when helper recovers"""
+    global _missing_helper_notified
+    if helper_name in _missing_helper_notified:
+        _missing_helper_notified.remove(helper_name)
+        try:
+            service.call(
+                "persistent_notification",
+                "dismiss",
+                notification_id=f"{_MISSING_HELPER_NOTIFICATION_ID}_{helper_name}"
+            )
+        except Exception:
+            pass
 
 @catch_hc_error("_get_home_state")
 def _get_home_state() -> str:
@@ -628,12 +651,10 @@ async def _start_work_ramp(restore_from_time=None):
     """
     global _work_ramp_task
     
-    # Calculate ramp end time (05:40 today)
-    now = _now()
-    end_time = now.replace(hour=5, minute=40, second=0, microsecond=0)
-    
     # Determine start time - use restore time if provided (after restart)
-    if restore_from_time:
+    now = _now()
+    resume_mode = bool(restore_from_time)
+    if resume_mode:
         if isinstance(restore_from_time, str):
             try:
                 start_time = datetime.fromisoformat(str(restore_from_time))
@@ -641,11 +662,35 @@ async def _start_work_ramp(restore_from_time=None):
                 start_time = now
         else:
             start_time = restore_from_time
-        start_time = start_time.replace(microsecond=0)
-        log.info(f"[HC] WORK RAMP: Resuming from {start_time.strftime('%H:%M')} → 50%/4000K until 05:40")
     else:
         start_time = now
-        log.info(f"[HC] WORK RAMP: Starting 10% → 50%/4000K until 05:40")
+
+    if not isinstance(start_time, datetime):
+        try:
+            start_time = datetime.fromisoformat(str(start_time))
+        except Exception:
+            start_time = now
+
+    if start_time.tzinfo is not None:
+        start_time = start_time.replace(tzinfo=None)
+    start_time = start_time.replace(microsecond=0)
+
+    end_time = start_time.replace(hour=5, minute=40, second=0, microsecond=0)
+    if end_time <= start_time:
+        log.warning(
+            f"[HC] WORK RAMP: Computed end {end_time.strftime('%H:%M')} is not after start"
+            "; clamping to start time"
+        )
+        end_time = start_time
+
+    if resume_mode:
+        log.info(
+            f"[HC] WORK RAMP: Resuming from {start_time.strftime('%H:%M')} → 50%/4000K until {end_time.strftime('%H:%M')}"
+        )
+    else:
+        log.info(
+            f"[HC] WORK RAMP: Starting 10% → 50%/4000K until {end_time.strftime('%H:%M')}"
+        )
     _set_sensor("sensor.pys_em_start_time", start_time.isoformat(), {
         "friendly_name": "Early Morning Start Time"
     })
@@ -677,8 +722,18 @@ async def _start_work_ramp(restore_from_time=None):
     _set_sensor("sensor.sleep_in_ramp_kelvin", initial_kelvin)
     log.info(f"[HC] WORK RAMP: Initial values: {initial_brightness}% / {initial_kelvin}K")
     
-    # Ramp loop until 05:40
-    while _now() < end_time:
+    hard_stop = start_time + _MAX_RAMP_RUNTIME
+    timed_out = False
+
+    # Ramp loop until 05:40 or timeout
+    while True:
+        current_now = _now()
+        if current_now >= end_time:
+            break
+        if current_now >= hard_stop:
+            timed_out = True
+            log.error(f"[HC] WORK RAMP: Exceeded max runtime {_MAX_RAMP_RUNTIME}; forcing completion")
+            break
         # Calculate current values
         current_brightness = _calculate_ramp_brightness(
             start_time, end_time,
@@ -721,6 +776,9 @@ async def _start_work_ramp(restore_from_time=None):
         # Wait 30 seconds before next update
         await asyncio.sleep(30)
 
+    if timed_out:
+        log.warning("[HC] WORK RAMP: Timeout reached; finalizing ramp early")
+
     # Ramp complete - hold at final values
     _set_sensor("sensor.sleep_in_ramp_brightness", WORK_RAMP_END_BRIGHTNESS)
     _set_sensor("sensor.sleep_in_ramp_kelvin", WORK_RAMP_END_TEMP)
@@ -759,7 +817,8 @@ async def _start_nonwork_ramp(start_time_override=None):
     log.info(f"[HC] NONWORK RAMP: Starting 10%/2000K → {target_brightness}%/5000K until {commit_dt.strftime('%H:%M')}")
     
     now = _now()
-    if start_time_override:
+    override_mode = bool(start_time_override)
+    if override_mode:
         if isinstance(start_time_override, str):
             try:
                 start_time = datetime.fromisoformat(str(start_time_override))
@@ -767,10 +826,37 @@ async def _start_nonwork_ramp(start_time_override=None):
                 start_time = now
         else:
             start_time = start_time_override
-        start_time = start_time.replace(microsecond=0)
     else:
         start_time = now
+
+    if not isinstance(start_time, datetime):
+        try:
+            start_time = datetime.fromisoformat(str(start_time))
+        except Exception:
+            start_time = now
+
+    if start_time.tzinfo is not None:
+        start_time = start_time.replace(tzinfo=None)
+    start_time = start_time.replace(microsecond=0)
     end_time = commit_dt
+    if not end_time:
+        log.error("[HC] NONWORK RAMP: Missing Day commit time; aborting ramp")
+        return
+    if not isinstance(end_time, datetime):
+        try:
+            end_time = datetime.fromisoformat(str(end_time))
+        except Exception as exc:
+            log.error(f"[HC] NONWORK RAMP: Invalid commit time '{commit_dt}': {exc}")
+            return
+    if end_time.tzinfo is not None:
+        end_time = end_time.replace(tzinfo=None)
+    end_time = end_time.replace(microsecond=0)
+    if end_time <= start_time:
+        log.warning(
+            f"[HC] NONWORK RAMP: Commit {end_time.strftime('%H:%M')} is not after start"
+            "; clamping to start time"
+        )
+        end_time = start_time
 
     _set_boolean_state("em_active", "on")
     _set_input_datetime("input_datetime.em_start_ts", start_time)
@@ -792,8 +878,18 @@ async def _start_nonwork_ramp(start_time_override=None):
         "friendly_name": "Early Morning Start Time"
     })
     
-    # Ramp loop until Day commit time
-    while _now() < end_time:
+    hard_stop = start_time + _MAX_RAMP_RUNTIME
+    timed_out = False
+
+    # Ramp loop until Day commit time or timeout
+    while True:
+        current_now = _now()
+        if current_now >= end_time:
+            break
+        if current_now >= hard_stop:
+            timed_out = True
+            log.error(f"[HC] NONWORK RAMP: Exceeded max runtime {_MAX_RAMP_RUNTIME}; forcing completion")
+            break
         # Calculate current values
         current_brightness = _calculate_ramp_brightness(
             start_time, end_time,
@@ -831,10 +927,13 @@ async def _start_nonwork_ramp(start_time_override=None):
         })
 
         log.info(f"[HC] NONWORK RAMP: {current_brightness}% / {current_kelvin}K")
-        
+
         # Wait 30 seconds before next update
         await asyncio.sleep(30)
-    
+
+    if timed_out:
+        log.warning("[HC] NONWORK RAMP: Timeout reached; finalizing ramp early")
+
     # Ramp complete - transition to Day mode
     _set_sensor("sensor.sleep_in_ramp_brightness", target_brightness)
     _set_sensor("sensor.sleep_in_ramp_kelvin", NONWORK_RAMP_END_TEMP)
@@ -1250,43 +1349,119 @@ def _update_day_ready_flag():
 def _compute_day_commit_time() -> datetime | None:
     """Compute day_commit_time = max(day_min_start, floor, learned_day_start)"""
     now = _now()
-    
-    dms = _get("sensor.day_min_start") or _get("pyscript.day_min_start")
-    floor_t = _get_day_earliest_time_floor()
-    learned = (_get("sensor.learned_day_start") or _get("sensor.day_learned_start") or
-               _get("input_datetime.learned_day_start") or _get("pyscript.learned_day_start"))
-    
-    candidates = []
-    
+
+    def _coerce_to_datetime(raw_value, source_name: str) -> datetime | None:
+        if raw_value in (None, "", "None"):
+            return None
+        try:
+            text = str(raw_value).replace("Z", "").strip()
+            if not text:
+                return None
+            if "T" in text or " " in text:
+                candidate = datetime.fromisoformat(text)
+            else:
+                parts = text.split(":")
+                hh = int(parts[0])
+                mm = int(parts[1]) if len(parts) > 1 else 0
+                ss = int(parts[2]) if len(parts) > 2 else 0
+                candidate = now.replace(hour=hh, minute=mm, second=ss, microsecond=0)
+            return candidate.replace(microsecond=0)
+        except Exception as exc:
+            log.warning(f"[HC] DAY COMMIT: Failed to parse {source_name}='{raw_value}': {exc}")
+            return None
+
+    def _resolve_helper_datetime(source_names: list[str], fallback_desc: str) -> tuple[datetime | None, str | None]:
+        sources = [(name, _get(name)) for name in source_names]
+        missing_names: list[str] = []
+        for name, raw in sources:
+            candidate = _coerce_to_datetime(raw, name)
+            if candidate:
+                if candidate.tzinfo is not None:
+                    candidate = candidate.astimezone().replace(tzinfo=None)
+                _clear_missing_helper_warning(name)
+                return candidate, name
+            if raw in (None, "", "None"):
+                missing_names.append(name)
+            else:
+                _notify_missing_helper(name, fallback_desc)
+        for name in missing_names:
+            _notify_missing_helper(name, fallback_desc)
+        return None, None
+
+    default_floor_dt = now.replace(
+        hour=_DEFAULT_DAY_FLOOR.hour,
+        minute=_DEFAULT_DAY_FLOOR.minute,
+        second=0,
+        microsecond=0
+    )
+
+    floor_dt, floor_source = _resolve_helper_datetime([
+        "input_datetime.day_earliest_time",
+        "pyscript.day_earliest_time",
+    ], f"Using default earliest floor {_DEFAULT_DAY_FLOOR.strftime('%H:%M')}")
+
+    if floor_dt:
+        floor_candidate = floor_dt.replace(second=0, microsecond=0)
+        floor_time_str = floor_candidate.strftime("%H:%M:%S")
+    else:
+        floor_candidate = default_floor_dt
+        floor_time_str = floor_candidate.strftime("%H:%M:%S")
+        log.warning(f"[HC] DAY COMMIT: No valid earliest floor helper value; defaulting to {floor_time_str}")
+        floor_source = "default_floor"
+
     try:
-        if dms:
-            s = str(dms).replace("Z","")
-            dt = datetime.fromisoformat(s) if "T" in s or " " in s else None
-            if dt is None:
-                hh, mm = map(int, s.split(":")[:2])
-                dt = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
-            candidates.append(dt.replace(microsecond=0))
+        _set_sensor("sensor.day_earliest_time", floor_time_str)
     except Exception:
         pass
-    
-    candidates.append(now.replace(hour=floor_t.hour, minute=floor_t.minute, second=0, microsecond=0))
-    
-    try:
-        if learned:
-            s = str(learned).replace("Z","")
-            ldt = datetime.fromisoformat(s) if "T" in s or " " in s else None
-            if ldt is None:
-                parts = s.split(":")
-                hh = int(parts[0]); mm = int(parts[1]) if len(parts) > 1 else 0
-                ldt = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
-            candidates.append(ldt.replace(microsecond=0))
-    except Exception:
-        pass
-    
+
+    candidates = [floor_candidate]
+    fallback_desc = f"Using earliest floor {floor_candidate.strftime('%H:%M')}"
+
+    dms, dms_source = _resolve_helper_datetime([
+        "sensor.day_min_start",
+        "pyscript.day_min_start"
+    ], fallback_desc)
+    if dms:
+        candidates.append(dms)
+    else:
+        dms_source = None
+
+    learned, learned_source = _resolve_helper_datetime([
+        "sensor.learned_day_start",
+        "sensor.day_learned_start",
+        "input_datetime.learned_day_start",
+        "pyscript.learned_day_start",
+    ], fallback_desc)
+    if learned:
+        candidates.append(learned)
+    else:
+        learned_source = None
+
     if not candidates:
-        return None
-    
-    return max(candidates)
+        fallback_dt = now.replace(second=0, microsecond=0)
+        log.error("[HC] DAY COMMIT: No valid candidates available; defaulting to current time")
+        return fallback_dt
+
+    commit = max(candidates)
+    if commit < now:
+        log.warning(f"[HC] DAY COMMIT: Computed commit time {commit.strftime('%H:%M')} is in the past; clamping to now")
+        commit = now.replace(second=0, microsecond=0)
+
+    def _describe(source_name: str | None, candidate: datetime | None) -> str:
+        if not candidate:
+            return "missing"
+        source_label = source_name or "unspecified"
+        return f"{source_label}@{candidate.strftime('%H:%M')}"
+
+    log.info(
+        "[HC] DAY COMMIT: floor=%s, day_min=%s, learned=%s → %s",
+        _describe(floor_source, floor_candidate),
+        _describe(dms_source, dms),
+        _describe(learned_source, learned),
+        commit.strftime("%H:%M"),
+    )
+
+    return commit
 
 @catch_hc_error("_resolve_day_target_brightness")
 def _resolve_day_target_brightness() -> tuple[int, str]:
@@ -1781,7 +1956,7 @@ def _handle_kitchen_motion_1(value=None, old_value=None, **kwargs):
     new_state = value if value is not None else _get(entity)
     if str(new_state).lower() == "on":
         log.info(f"[HC] Kitchen motion sensor 1 triggered")
-        task.create(_classify_kitchen_motion(entity))
+        _classify_kitchen_motion(entity)
 
 @state_trigger("binary_sensor.kitchen_iris_frig_occupancy == 'on'")
 @catch_hc_trigger_error("handle_kitchen_motion_2")
@@ -1791,7 +1966,7 @@ def _handle_kitchen_motion_2(value=None, old_value=None, **kwargs):
     new_state = value if value is not None else _get(entity)
     if str(new_state).lower() == "on":
         log.info(f"[HC] Kitchen motion sensor 2 triggered")
-        task.create(_classify_kitchen_motion(entity))
+        _classify_kitchen_motion(entity)
 
 # Minutely evaluation
 @time_trigger("cron(* * * * *)")
