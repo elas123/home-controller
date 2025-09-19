@@ -1276,7 +1276,7 @@ def _update_in_evening_window_flag():
 def _update_day_ready_flag():
     """Update day ready flag with hysteresis"""
     global _day_ready_hysteresis_active, _day_ready_last_state, _day_ready_candidate_state, _day_ready_candidate_since
-    
+
     dms = _cached_day_min_start
     target = _cached_day_elev_target if _cached_day_elev_target is not None else 10
     
@@ -1341,6 +1341,30 @@ def _update_day_ready_flag():
         f"not_in_evening={str(not_in_evening).lower()}, debounce={debounce_note}"
     )
     _set_sensor("sensor.day_ready_reason", reason)
+
+
+@catch_hc_error("_maybe_transition_to_day")
+def _maybe_transition_to_day(reason: str) -> bool:
+    """Transition to Day mode when conditions allow"""
+    if _get("binary_sensor.day_ready_now") != "on":
+        return False
+    if _get("binary_sensor.in_evening_window") == "on":
+        return False
+
+    current = _get_home_state()
+    if current == "Night":
+        _clear_cutover_pending()
+        _set_home_state("Day")
+        _set_last_action(f"day_ready→Day:{reason}")
+        return True
+
+    if current == "Early Morning" and _get_boolean_state("sleep_in_ramp_active") != "on":
+        _mark_em_end("day_ready_transition")
+        _set_home_state("Day")
+        _set_last_action(f"day_ready→Day:{reason}")
+        return True
+
+    return False
 
 # ============================================================================
 # DAY COMMIT TIME AND BRIGHTNESS TARGET
@@ -1816,10 +1840,11 @@ def _minutely_tick():
 
     _update_in_evening_window_flag()
     _update_day_ready_flag()
-    
+    _maybe_transition_to_day("minutely")
+
     # Note: Non-work Early Morning → Day is handled by the ramp completion
     # The nonwork ramp automatically transitions to Day when complete
-    
+
     # Clear pending cutover when leaving Night
     if _get_home_state() != "Night" and _get("binary_sensor.pys_night_cutover_pending") == "on":
         _clear_cutover_pending()
@@ -1972,15 +1997,24 @@ def _handle_kitchen_motion_2(value=None, old_value=None, **kwargs):
 @time_trigger("cron(* * * * *)")
 @catch_hc_trigger_error("minutely_evaluation")
 def _minutely_evaluation():
-    if not _is_controller_enabled(): 
+    if not _is_controller_enabled():
         return
     _minutely_tick()
+
+
+@state_trigger("binary_sensor.day_ready_now")
+@catch_hc_trigger_error("day_ready_state_changed")
+def _on_day_ready_state(value=None, old_value=None, **kwargs):
+    if not _is_controller_enabled():
+        return
+    if value == "on":
+        _maybe_transition_to_day("day_ready_sensor")
 
 # Bedroom TV state changes
 @state_trigger(f"{BEDROOM_TV}")
 @catch_hc_trigger_error("bedroom_tv_changed")
 def _bedroom_tv_changed(value=None, old_value=None, **kwargs):
-    if not _is_controller_enabled(): 
+    if not _is_controller_enabled():
         return
     st = str(value or _get(BEDROOM_TV) or "").lower()
     if st not in ("off","unavailable",""):
