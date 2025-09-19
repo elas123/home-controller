@@ -20,7 +20,7 @@ MOTION_2      = "binary_sensor.kitchen_iris_frig_occupancy"
 HOME_STATE_PRIMARY = "pyscript.home_state"
 HOME_STATE_FALLBACK = "input_select.home_state"
 ALLOWED_MODES = {"Day", "Evening", "Night", "Early Morning"}  # mains are NOT blocked in Evening
-WLED_BLOCKED_MODES = {"Day", "Away"}
+WLED_ALLOWED_MODES = {"Evening", "Night", "Early Morning"}
 NIGHT_MAIN_RESUME_HOUR = 4
 NIGHT_MAIN_RESUME_MINUTE = 45
 
@@ -190,7 +190,7 @@ def _ensure_wled_off(reason: str | None = None):
 def _apply_for_motion(active: bool, reason: str):
     hs = _home_state()
     if not TEST_BYPASS_MODE and hs not in ALLOWED_MODES:
-        if hs in WLED_BLOCKED_MODES:
+        if hs not in WLED_ALLOWED_MODES:
             _ensure_wled_off(f"mode={hs} disallows WLED (reason={reason})")
         _info(f"SKIP (mode={hs}) reason={reason}")
         return
@@ -203,7 +203,7 @@ def _apply_for_motion(active: bool, reason: str):
     if TEST_BYPASS_MODE:
         wled_allowed = True
     else:
-        wled_allowed = hs not in WLED_BLOCKED_MODES
+        wled_allowed = hs in WLED_ALLOWED_MODES
 
     if active:
         if wled_allowed:
@@ -257,7 +257,7 @@ async def kitchen_motion_listener(**kwargs):
 @state_trigger(HOME_STATE_FALLBACK)
 def kitchen_mode_change_guard(**kwargs):
     hs = _home_state()
-    if hs in {"Day", "Away"}:
+    if hs not in WLED_ALLOWED_MODES:
         _ensure_wled_off(f"home mode -> {hs}")
 
 # --- manual tests ---
