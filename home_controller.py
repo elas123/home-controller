@@ -576,7 +576,7 @@ def _calculate_ramp_brightness(start_time: datetime, end_time: datetime,
     return int(round(current))
 
 @catch_hc_error("_calculate_ramp_kelvin")
-def _calculate_ramp_kelvin(start_time: datetime, end_time: datetime, 
+def _calculate_ramp_kelvin(start_time: datetime, end_time: datetime,
                              start_k: int, end_k: int) -> int:
     """Calculate current ramp color temperature based on time"""
     now = _now()
@@ -606,6 +606,24 @@ def _calculate_ramp_progress(start_time: datetime, end_time: datetime) -> int:
     if now >= end_time:
         return 100
     return int(round(((now - start_time).total_seconds() / total) * 100))
+
+
+def _set_ramp_temperature(value: int, attrs: dict | None = None):
+    """Set both kelvin and legacy temperature sensors for ramp outputs"""
+    _set_sensor("sensor.sleep_in_ramp_kelvin", value, attrs)
+
+    temp_attrs = dict(attrs or {})
+    friendly = temp_attrs.get("friendly_name")
+    if isinstance(friendly, str):
+        if "Kelvin" in friendly:
+            temp_attrs["friendly_name"] = friendly.replace("Kelvin", "Temperature")
+        else:
+            temp_attrs["friendly_name"] = friendly
+    else:
+        temp_attrs["friendly_name"] = "Morning Ramp Temperature"
+
+    temp_attrs.setdefault("unit_of_measurement", "K")
+    _set_sensor("sensor.sleep_in_ramp_temperature", value, temp_attrs)
 
 
 def _mirror_ramp_helpers(start_time: datetime, end_time: datetime, ramp_type: str):
@@ -719,7 +737,7 @@ async def _start_work_ramp(restore_from_time=None):
         WORK_RAMP_START_TEMP, WORK_RAMP_END_TEMP
     )
     _set_sensor("sensor.sleep_in_ramp_brightness", initial_brightness)
-    _set_sensor("sensor.sleep_in_ramp_kelvin", initial_kelvin)
+    _set_ramp_temperature(initial_kelvin)
     log.info(f"[HC] WORK RAMP: Initial values: {initial_brightness}% / {initial_kelvin}K")
     
     hard_stop = start_time + _MAX_RAMP_RUNTIME
@@ -753,7 +771,7 @@ async def _start_work_ramp(restore_from_time=None):
             "end_time": end_time.isoformat(),
             "start_time": start_time.isoformat()
         })
-        _set_sensor("sensor.sleep_in_ramp_kelvin", current_kelvin, {
+        _set_ramp_temperature(current_kelvin, {
             "friendly_name": "Morning Ramp Kelvin",
             "unit_of_measurement": "K",
             "ramp_type": "work",
@@ -781,7 +799,7 @@ async def _start_work_ramp(restore_from_time=None):
 
     # Ramp complete - hold at final values
     _set_sensor("sensor.sleep_in_ramp_brightness", WORK_RAMP_END_BRIGHTNESS)
-    _set_sensor("sensor.sleep_in_ramp_kelvin", WORK_RAMP_END_TEMP)
+    _set_ramp_temperature(WORK_RAMP_END_TEMP)
     _set_sensor("sensor.sleep_in_ramp_progress", 100, {
         "friendly_name": "Morning Ramp Progress",
         "unit_of_measurement": "%",
@@ -865,7 +883,7 @@ async def _start_nonwork_ramp(start_time_override=None):
     # Set initial state
     _set_boolean_state("sleep_in_ramp_active", "on")
     _set_sensor("sensor.sleep_in_ramp_brightness", NONWORK_RAMP_START_BRIGHTNESS)
-    _set_sensor("sensor.sleep_in_ramp_kelvin", NONWORK_RAMP_START_TEMP)
+    _set_ramp_temperature(NONWORK_RAMP_START_TEMP)
     _mirror_ramp_helpers(start_time, end_time, "nonwork")
     _set_em_status("day_off_ramp_active", {
         "start": start_time.strftime('%H:%M:%S'),
@@ -909,7 +927,7 @@ async def _start_nonwork_ramp(start_time_override=None):
             "source": source,
             "end_time": end_time.isoformat()
         })
-        _set_sensor("sensor.sleep_in_ramp_kelvin", current_kelvin, {
+        _set_ramp_temperature(current_kelvin, {
             "friendly_name": "Morning Ramp Kelvin",
             "unit_of_measurement": "K",
             "ramp_type": "nonwork",
@@ -936,7 +954,7 @@ async def _start_nonwork_ramp(start_time_override=None):
 
     # Ramp complete - transition to Day mode
     _set_sensor("sensor.sleep_in_ramp_brightness", target_brightness)
-    _set_sensor("sensor.sleep_in_ramp_kelvin", NONWORK_RAMP_END_TEMP)
+    _set_ramp_temperature(NONWORK_RAMP_END_TEMP)
     _set_boolean_state("sleep_in_ramp_active", "off")
     _set_sensor("sensor.sleep_in_ramp_progress", 100, {
         "friendly_name": "Morning Ramp Progress",
@@ -1034,6 +1052,7 @@ def _ensure_entities():
         ("sensor.evening_last_reason", ""),
         ("sensor.sleep_in_ramp_brightness", 10),
         ("sensor.sleep_in_ramp_kelvin", 2000),
+        ("sensor.sleep_in_ramp_temperature", 2000),
         ("input_boolean.sleep_in_ramp_active", "off"),
         ("pyscript.sleep_in_ramp_active", "off"),
         ("sensor.night_last_reason", ""),
