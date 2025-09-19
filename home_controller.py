@@ -882,8 +882,6 @@ async def _start_nonwork_ramp(start_time_override=None):
 
     # Set initial state
     _set_boolean_state("sleep_in_ramp_active", "on")
-    _set_sensor("sensor.sleep_in_ramp_brightness", NONWORK_RAMP_START_BRIGHTNESS)
-    _set_ramp_temperature(NONWORK_RAMP_START_TEMP)
     _mirror_ramp_helpers(start_time, end_time, "nonwork")
     _set_em_status("day_off_ramp_active", {
         "start": start_time.strftime('%H:%M:%S'),
@@ -895,7 +893,37 @@ async def _start_nonwork_ramp(start_time_override=None):
     _set_sensor("sensor.pys_em_start_time", start_time.isoformat(), {
         "friendly_name": "Early Morning Start Time"
     })
-    
+
+    # Calculate and publish the initial ramp values (supports resume scenarios)
+    initial_brightness = _calculate_ramp_brightness(
+        start_time, end_time,
+        NONWORK_RAMP_START_BRIGHTNESS, target_brightness
+    )
+    initial_kelvin = _calculate_ramp_kelvin(
+        start_time, end_time,
+        NONWORK_RAMP_START_TEMP, NONWORK_RAMP_END_TEMP
+    )
+
+    brightness_attrs = {
+        "friendly_name": "Morning Ramp Brightness",
+        "unit_of_measurement": "%",
+        "ramp_type": "nonwork",
+        "target": target_brightness,
+        "source": source,
+        "end_time": end_time.isoformat()
+    }
+    _set_sensor("sensor.sleep_in_ramp_brightness", initial_brightness, brightness_attrs)
+
+    kelvin_attrs = {
+        "friendly_name": "Morning Ramp Kelvin",
+        "unit_of_measurement": "K",
+        "ramp_type": "nonwork",
+        "target": NONWORK_RAMP_END_TEMP,
+        "end_time": end_time.isoformat()
+    }
+    _set_ramp_temperature(initial_kelvin, kelvin_attrs)
+    log.info(f"[HC] NONWORK RAMP: Initial values: {initial_brightness}% / {initial_kelvin}K")
+
     hard_stop = start_time + _MAX_RAMP_RUNTIME
     timed_out = False
 

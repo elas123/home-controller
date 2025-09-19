@@ -261,3 +261,76 @@ def test_ramps_publish_temperature_sensor(hc_env):
     asyncio.run(module._start_work_ramp(restore_from_time=datetime(2024, 1, 5, 4, 50)))
     assert state.get("sensor.sleep_in_ramp_temperature") == module.WORK_RAMP_END_TEMP
     assert state.get("sensor.sleep_in_ramp_kelvin") == module.WORK_RAMP_END_TEMP
+
+
+def test_nonwork_ramp_resume_uses_progress_metadata(hc_env):
+    module, state = hc_env
+    prime_defaults(state)
+
+    start_time = datetime(2024, 1, 5, 6, 0)
+    resume_time = datetime(2024, 1, 5, 8, 0)
+    commit_time = datetime(2024, 1, 5, 9, 0)
+    target_brightness = 70
+    source = "priority"
+
+    module._compute_day_commit_time = lambda: commit_time
+    module._resolve_day_target_brightness = lambda: (target_brightness, source)
+
+    call_counter = {"count": 0}
+
+    def fake_now():
+        call_counter["count"] += 1
+        if call_counter["count"] <= 6:
+            return resume_time
+        return commit_time
+
+    recorded_brightness: list[tuple[int, dict[str, Any]]] = []
+    recorded_temperature: list[tuple[int, dict[str, Any]]] = []
+
+    original_set_sensor = module._set_sensor
+    original_now = module._now
+
+    module._now = fake_now
+
+    def tracking_set_sensor(entity_id: str, value: Any, attrs: dict | None = None):
+        payload = dict(attrs or {})
+        if entity_id == "sensor.sleep_in_ramp_brightness":
+            recorded_brightness.append((value, payload))
+        if entity_id == "sensor.sleep_in_ramp_temperature":
+            recorded_temperature.append((value, payload))
+        return original_set_sensor(entity_id, value, attrs)
+
+    module._set_sensor = tracking_set_sensor
+
+    try:
+        asyncio.run(module._start_nonwork_ramp(start_time_override=start_time))
+    finally:
+        module._set_sensor = original_set_sensor
+        module._now = original_now
+
+    total_seconds = (commit_time - start_time).total_seconds()
+    progress = (resume_time - start_time).total_seconds() / total_seconds
+    expected_brightness = int(round(
+        module.NONWORK_RAMP_START_BRIGHTNESS +
+        (target_brightness - module.NONWORK_RAMP_START_BRIGHTNESS) * progress
+    ))
+    expected_kelvin = int(round(
+        module.NONWORK_RAMP_START_TEMP +
+        (module.NONWORK_RAMP_END_TEMP - module.NONWORK_RAMP_START_TEMP) * progress
+    ))
+
+    assert recorded_brightness, "Expected at least one brightness write"
+    assert recorded_temperature, "Expected at least one temperature write"
+
+    first_brightness_value, first_brightness_attrs = recorded_brightness[0]
+    assert first_brightness_value == expected_brightness
+    assert first_brightness_attrs.get("ramp_type") == "nonwork"
+    assert first_brightness_attrs.get("target") == target_brightness
+    assert first_brightness_attrs.get("source") == source
+    assert first_brightness_attrs.get("end_time") == commit_time.isoformat()
+
+    first_temperature_value, first_temperature_attrs = recorded_temperature[0]
+    assert first_temperature_value == expected_kelvin
+    assert first_temperature_attrs.get("ramp_type") == "nonwork"
+    assert first_temperature_attrs.get("target") == module.NONWORK_RAMP_END_TEMP
+    assert first_temperature_attrs.get("end_time") == commit_time.isoformat()
