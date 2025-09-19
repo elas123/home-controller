@@ -66,6 +66,37 @@ def _door_closed() -> bool:
     return _state(DOOR_SENSOR) == "off"
 
 
+def _cancel_hold_timer(reason: str | None = None):
+    """Cancel any pending hold timer task and swallow cancellation errors."""
+    global hold_mode_task
+    task_ref = hold_mode_task
+    if not task_ref:
+        return
+
+    hold_mode_task = None
+
+    def _finalize_cancel(task_obj):
+        try:
+            task_obj.result()
+        except asyncio.CancelledError:
+            if reason:
+                _info(f"Hold timer cancelled ({reason})")
+            else:
+                _info("Hold timer cancelled")
+        except Exception as exc:
+            _warn(f"Hold timer cancellation raised: {exc}")
+        else:
+            if reason:
+                _info(f"Hold timer completed early ({reason})")
+
+    if task_ref.done():
+        _finalize_cancel(task_ref)
+        return
+
+    task_ref.add_done_callback(_finalize_cancel)
+    task_ref.cancel()
+
+
 # --- Brightness Calculation (prefers external sources; falls back if none available) ---
 def calculate_bathroom_brightness():
     try:
@@ -179,6 +210,7 @@ def _apply_for_motion(active: bool, reason: str):
         if closed:
             if not hold_mode_active:
                 _info("Door closed -> 100% hold")
+            _cancel_hold_timer("door closed hold")
             hold_mode_active = True
             _light_on(DOOR_CLOSED_BRIGHTNESS)
             return
@@ -205,6 +237,7 @@ def _apply_for_motion(active: bool, reason: str):
         _light_on(target)
     else:
         if not hold_mode_active:
+            _cancel_hold_timer("motion cleared")
             _light_off()
         else:
             _info("Hold mode active → keep on")
@@ -219,9 +252,7 @@ async def bathroom_motion_listener(**kwargs):
     _info(f"Motion: {eid} -> {new} @ {datetime.now().strftime('%H:%M:%S')}")
 
     if _any_motion_active():
-        if hold_mode_task:
-            hold_mode_task.cancel()
-            hold_mode_task = None
+        _cancel_hold_timer("motion active")
         # Optional: trigger ramp service when appropriate
         _apply_for_motion(True, reason=f"{eid} active")
     else:
@@ -237,12 +268,19 @@ async def bathroom_motion_listener(**kwargs):
 
 
 async def _hold_timeout():
-    global hold_mode_active
-    await asyncio.sleep(HOLD_TIMEOUT_MINUTES * 60)
-    if not _any_motion_active():
-        hold_mode_active = False
-        _light_off()
-        _info("Hold timeout → off")
+    global hold_mode_active, hold_mode_task
+    current_task = asyncio.current_task()
+    try:
+        await asyncio.sleep(HOLD_TIMEOUT_MINUTES * 60)
+        if not _any_motion_active():
+            hold_mode_active = False
+            _light_off()
+            _info("Hold timeout → off")
+    except asyncio.CancelledError:
+        raise
+    finally:
+        if hold_mode_task is current_task:
+            hold_mode_task = None
 
 
 # --- Door Sensor Listener ---
@@ -255,14 +293,13 @@ def bathroom_door_listener(**kwargs):
     _info(f"Door -> {new} (closed={closed}) grace={door_open_grace_until:.1f} now={now_ts:.1f}")
 
     if closed and _state(BATHROOM_LIGHT) == "on":
+        _cancel_hold_timer("door closed sensor")
         hold_mode_active = True
         door_open_grace_until = 0.0
         _light_on(DOOR_CLOSED_BRIGHTNESS)
         _info("Door closed → 100% hold")
     elif not closed:
-        if hold_mode_task:
-            hold_mode_task.cancel()
-            hold_mode_task = None
+        _cancel_hold_timer("door opened")
         hold_mode_active = False
         door_open_grace_until = datetime.now().timestamp() + DOOR_OPEN_GRACE_SECONDS
         _info(f"Door open -> extend grace to {door_open_grace_until:.1f}")
@@ -361,3 +398,4 @@ def bathroom_startup():
     _info("Bathroom system startup")
     _info(f"Door closed: {_door_closed()}")
     _info(f"Motion active: {_any_motion_active()}")
+
