@@ -8,6 +8,7 @@ import asyncio
 import threading
 import traceback
 import json
+from typing import Optional
 
 # ============================================================================
 # CONFIGURATION - SET IN STONE PER REWORK SPEC
@@ -47,6 +48,9 @@ EV_RAMP_START_K = 4000
 EV_RAMP_END_K = 2000
 EV_RAMP_BRI = 50  # Hold at 50%
 
+# Night waiting timeout (start only after LR TV turns OFF post-23:00)
+WAIT_FOR_BR_TV_TIMEOUT_MIN = 30
+
 # SET IN STONE: Temperature-capable lights (Lamp One, Lamp Two, Closet Light)
 TEMP_CAPABLE_LIGHTS = [
     "light.lamp_1",      # Lamp One
@@ -73,6 +77,7 @@ _work_ramp_task = None
 _nonwork_ramp_task = None
 _bedroom_tv_task = None
 _evening_brightness_ramp_task = None
+_waiting_timeout_task = None
 _classification_lock = threading.Lock()
 _cached_evening_start = None
 _cached_day_min_start = None
@@ -94,6 +99,11 @@ _MAX_RAMP_RUNTIME = timedelta(hours=6)
 _DEFAULT_DAY_FLOOR = dt_time(7, 30)
 
 _MQTT_PREFIX = "home/rework/controller"
+
+
+def _offish(s: str) -> bool:
+    s = (s or "").lower()
+    return s in ("off", "unavailable", "unknown", "", "none")
 
 # ============================================================================
 # ERROR HANDLING
@@ -1639,9 +1649,101 @@ def _run_night_cutover():
     except Exception as e:
         log.warning(f"[HC] night_cutover error: {e}")
 
+
+@catch_hc_error("_is_waiting_for_bedroom_tv")
+def _is_waiting_for_bedroom_tv() -> bool:
+    """Return True if we are waiting for the bedroom TV to turn on."""
+    return str(_get_boolean_state("waiting_for_bedroom_tv") or "off").lower() == "on"
+
+
+@catch_hc_error("_set_waiting_for_bedroom_tv")
+def _set_waiting_for_bedroom_tv(source: Optional[str] = None):
+    """Mark that Night mode is waiting for the bedroom TV."""
+    reason = source or "unknown"
+    status = "refresh" if _is_waiting_for_bedroom_tv() else "start"
+    _set_boolean_state("waiting_for_bedroom_tv", "on")
+    _set_sensor(
+        "sensor.night_waiting_reason",
+        reason,
+        {
+            "friendly_name": "Night Waiting Reason",
+            "timestamp": _now().isoformat(),
+            "status": "waiting",
+            "source": reason,
+            "mode": status,
+        },
+    )
+    _set_last_action(f"night_waiting:{status}:{reason}")
+
+
+@catch_hc_error("_postpone_night_until_bedroom_tv")
+def _postpone_night_until_bedroom_tv(reason: str):
+    """Force Evening and wait for bedroom TV before entering Night."""
+    log.info(f"[HC] Postponing Night; waiting for bedroom TV ({reason}).")
+    _set_waiting_for_bedroom_tv(reason)
+    _cancel_waiting_timeout("postpone_waiting_reset")
+    if _get_home_state() != "Evening":
+        _enter_evening(f"waiting_for_bedroom_tv:{reason}", force=True)
+
+
+@catch_hc_error("_start_waiting_timeout")
+def _start_waiting_timeout():
+    """Start/replace the post-23:00 waiting timeout (30 min) for BR TV."""
+    global _waiting_timeout_task
+    if _waiting_timeout_task and not getattr(_waiting_timeout_task, "done", lambda: True)():
+        log.info("[HC] Waiting timeout already active; keeping existing countdown.")
+        return
+    _cancel_task_if_running(_waiting_timeout_task, "start_waiting_timeout")
+    _waiting_timeout_task = task.create(_waiting_timeout_runner())
+
+
+@catch_hc_error("_cancel_waiting_timeout")
+def _cancel_waiting_timeout(reason: str = "cancel_waiting_timeout"):
+    """Cancel the BR-TV waiting timeout, if any."""
+    global _waiting_timeout_task
+    _cancel_task_if_running(_waiting_timeout_task, reason)
+    _waiting_timeout_task = None
+
+
+@catch_hc_error("_waiting_timeout_runner")
+async def _waiting_timeout_runner():
+    """If BR TV never turns on after LR TV went off, force Night after 30 minutes."""
+    try:
+        await asyncio.sleep(WAIT_FOR_BR_TV_TIMEOUT_MIN * 60)
+        if _is_waiting_for_bedroom_tv() and _get_home_state() not in ("Night", "Away"):
+            log.info("[HC] Waiting timeout expired; BR TV did not turn on. Forcing Night.")
+            _clear_waiting_for_bedroom_tv("waiting_timeout_expired")
+            _enter_night(run_cutover=True, reason="waiting_timeout")
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        log.warning(f"[HC] waiting_timeout_runner error: {e}")
+
+
+@catch_hc_error("_clear_waiting_for_bedroom_tv")
+def _clear_waiting_for_bedroom_tv(source: Optional[str] = None):
+    if not _is_waiting_for_bedroom_tv():
+        return
+    reason = source or "unknown"
+    _cancel_waiting_timeout("clear_waiting_flag")
+    _set_boolean_state("waiting_for_bedroom_tv", "off")
+    _set_sensor(
+        "sensor.night_waiting_reason",
+        f"cleared:{reason}",
+        {
+            "friendly_name": "Night Waiting Reason",
+            "timestamp": _now().isoformat(),
+            "status": "cleared",
+            "source": reason,
+        },
+    )
+    _set_last_action(f"night_waiting:cleared:{reason}")
+
+
 @catch_hc_error("_enter_night")
 def _enter_night(run_cutover: bool, reason: str):
     """Enter Night mode"""
+    _cancel_waiting_timeout("enter_night")  # cancel countdown
     now = _now()
     evening_started_today = False
     try:
@@ -1687,14 +1789,23 @@ async def _bedroom_tv_debounced():
     """Debounced Bedroom TV to Night transition"""
     try:
         await asyncio.sleep(BEDROOM_TV_DEBOUNCE_SECONDS)
-        st = str(_get(BEDROOM_TV) or "").lower()
-        if st not in ("off","unavailable",""):
+        br_state = str(_get(BEDROOM_TV) or "").lower()
+        if not _offish(br_state):  # BR TV ON-ish
             if _get("binary_sensor.pys_night_cutover_pending") == "on":
+                if _is_waiting_for_bedroom_tv():
+                    _clear_waiting_for_bedroom_tv("bedroom_tv_on_cutover")
                 _clear_cutover_pending()
                 _run_night_cutover()
                 _set_last_action("night_cutover_resolved_bedroom_tv")
+                return
+
+            lr_state = str(_get(LIVINGROOM_TV) or "").lower()
+            if _offish(lr_state):
+                if _is_waiting_for_bedroom_tv():
+                    _clear_waiting_for_bedroom_tv("bedroom_tv_on")
+                _enter_night(run_cutover=True, reason=f"bedroom_tv_triggered_night:{br_state}")
             else:
-                _enter_night(run_cutover=True, reason=f"bedroom_tv:{st}")
+                _set_last_action("bedroom_tv_on_but_living_room_still_on")
     except Exception as e:
         log.warning(f"[HC] debounce error: {e}")
 
@@ -1703,16 +1814,15 @@ def _failsafe_23_handler():
     """23:00 failsafe for Night mode"""
     if _get_home_state() == "Away": 
         return
-    if _night_started_on() == _today_str(): 
+    if _night_started_on() == _today_str():
         return
-    
+
     lr_st = str(_get(LIVINGROOM_TV) or "").lower()
-    lr_on = lr_st not in ("off","unavailable","")
-    
-    if lr_on:
-        _enter_night(run_cutover=False, reason="failsafe_23_lr_tv_on")
-    else:
-        _enter_night(run_cutover=True, reason="failsafe_23")
+    if not _offish(lr_st):
+        _postpone_night_until_bedroom_tv("failsafe_23_lr_tv_on")
+        return
+
+    _enter_night(run_cutover=True, reason="failsafe_23")
 
 # ============================================================================
 # EVENING BRIGHTNESS PRE-RAMP (19:50-20:00)
@@ -1924,8 +2034,8 @@ def _evaluate_startup_state():
     if now.time() >= cutoff:
         if _night_started_on() != _today_str():
             lr_st = str(_get(LIVINGROOM_TV) or "").lower()
-            if lr_st not in ("off","unavailable",""):
-                _enter_night(run_cutover=False, reason="startup_post_23_lr_on")
+            if not _offish(lr_st):
+                _postpone_night_until_bedroom_tv("startup_post_23_lr_on")
             else:
                 _enter_night(run_cutover=True, reason="startup_post_23")
         else:
@@ -2065,14 +2175,42 @@ def _bedroom_tv_changed(value=None, old_value=None, **kwargs):
     if not _is_controller_enabled():
         return
     st = str(value or _get(BEDROOM_TV) or "").lower()
-    if st not in ("off","unavailable",""):
+    if not _offish(st):
         _bedroom_tv_trigger_to_night()
+
+
+@state_trigger(f"{LIVINGROOM_TV}")
+@catch_hc_trigger_error("livingroom_tv_change")
+def _livingroom_tv_changed(value=None, old_value=None, **kwargs):
+    """Handle LR TV state changes after 23:00 while waiting for BR TV."""
+    if not _is_controller_enabled():
+        return
+    if not _is_waiting_for_bedroom_tv():
+        return
+    if _now().time() < dt_time(23, 0):
+        return
+    if _get_home_state() in ("Night", "Away"):
+        return
+
+    async def _maybe_start():
+        try:
+            await asyncio.sleep(2)  # small debounce
+            curr = str(_get(LIVINGROOM_TV) or "").lower()
+            if _is_waiting_for_bedroom_tv() and _get_home_state() not in ("Night", "Away") and _offish(curr):
+                log.info("[HC] LR TV is OFF after 23:00 while waiting → starting 30-min BR-TV timer.")
+                _start_waiting_timeout()
+            # NOTE: If LR TV turns back ON, we do nothing; timer continues.
+        except Exception as e:
+            log.warning(f"[HC] livingroom_tv_changed apply error: {e}")
+
+    task.create(_maybe_start())
+
 
 # 23:00 failsafe
 @time_trigger("cron(0 23 * * *)")
 @catch_hc_trigger_error("failsafe_23")
 def _at_23_failsafe():
-    if not _is_controller_enabled(): 
+    if not _is_controller_enabled():
         return
     _failsafe_23_handler()
 
@@ -2122,6 +2260,7 @@ def _midnight_reset():
     _set_boolean_state("evening_ramp_started_today", "off")
     _set_boolean_state("evening_done_today", "off")
     _set_boolean_state("evening_mode_active", "off")
+    _clear_waiting_for_bedroom_tv("midnight_reset")
     _set_last_action("midnight_reset_evening_flags")
 
 # Presence changes
@@ -2150,7 +2289,7 @@ def _handle_presence_change(value=None, old_value=None, **kwargs):
             if now.time() >= cutoff or now.time() < dt_time(4,45):
                 log.info("[HC][PRESENCE] Branch: Returning during Night hours.")
                 lr_state = str(_get(LIVINGROOM_TV) or "").lower()
-                lr_on = lr_state not in ("off","unavailable","")
+                lr_on = not _offish(lr_state)
                 _enter_night(run_cutover=not lr_on, reason="presence_return_after_away")
             elif _get("binary_sensor.in_evening_window") == "on" and now.time() < cutoff:
                 night_started = _night_started_on()
@@ -2202,7 +2341,9 @@ def _handle_presence_change(value=None, old_value=None, **kwargs):
             _set_home_state("Away")
             if _get("binary_sensor.pys_night_cutover_pending") == "on":
                 _clear_cutover_pending()
-            
+            if _is_waiting_for_bedroom_tv():
+                _clear_waiting_for_bedroom_tv("presence_away")
+
             try:
                 lights = state.names(domain="light")
                 on_lights = [
@@ -2363,6 +2504,9 @@ def get_home_controller_status():
             "cutover_pending": _get("binary_sensor.pys_night_cutover_pending"),
             "failsafe_time": "23:00",
             "last_reason": _get("sensor.night_last_reason"),
+            "waiting_for_bedroom_tv": _is_waiting_for_bedroom_tv(),
+            "waiting_reason": _get("sensor.night_waiting_reason"),
+            "waiting_timeout_active": bool(_waiting_timeout_task and not getattr(_waiting_timeout_task, "done", lambda: True)()),
         },
         "last_action": _get("sensor.pys_last_action"),
     }
