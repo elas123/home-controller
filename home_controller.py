@@ -359,6 +359,7 @@ def _get_on_temp_capable_lights() -> list[str]:
             result.append(entity)
     return result
 
+
 def _cancel_task_if_running(existing_task, name: str):
     """Cancel an existing asyncio task if it is still running"""
     try:
@@ -460,7 +461,7 @@ def _enter_evening(reason: str, force: bool = False) -> bool:
     current_state = _get_home_state()
     if current_state != "Evening":
         _set_home_state("Evening")
-    
+
     _set_boolean_state("evening_mode_active", "on")
     _set_sensor("sensor.evening_last_reason", reason, {
         "friendly_name": "Evening Last Reason",
