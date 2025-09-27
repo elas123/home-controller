@@ -1572,9 +1572,11 @@ def _publish_day_commit_and_target():
     """Publish day commit time and brightness target sensors"""
     commit = _compute_day_commit_time()
     if commit:
-        state.set("sensor.day_commit_time", commit.isoformat(sep=" "), {
-            "friendly_name": "Day Commit Time",
-        })
+        _set_sensor(
+            "sensor.day_commit_time",
+            commit.isoformat(sep=" "),
+            {"friendly_name": "Day Commit Time"},
+        )
         if _get("input_datetime.ramp_calculated_end_time") not in (None, "unavailable"):
             try:
                 service.call("input_datetime","set_datetime",
@@ -1583,18 +1585,23 @@ def _publish_day_commit_and_target():
             except Exception as e:
                 log.warning(f"[HC] Could not mirror commit time: {e}")
     else:
-        state.set("sensor.day_commit_time", "", {
-            "friendly_name": "Day Commit Time", 
-            "reason":"insufficient_inputs"
-        })
-    
+        _set_sensor(
+            "sensor.day_commit_time",
+            "",
+            {"friendly_name": "Day Commit Time", "reason": "insufficient_inputs"},
+        )
+
     bri, src = _resolve_day_target_brightness()
-    state.set("sensor.day_target_brightness", bri, {
-        "friendly_name": "Day Target Brightness",
-        "unit_of_measurement": "%",
-        "source": src,
-        "updated_at": _now().isoformat()
-    })
+    _set_sensor(
+        "sensor.day_target_brightness",
+        bri,
+        {
+            "friendly_name": "Day Target Brightness",
+            "unit_of_measurement": "%",
+            "source": src,
+            "updated_at": _now().isoformat(),
+        },
+    )
 
 # ============================================================================
 # NIGHT MODE - SET IN STONE
